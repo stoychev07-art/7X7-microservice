@@ -1,0 +1,66 @@
+# Cursor / editor / planning
+.cursor/
+plans/
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg
+*.egg-info/
+.eggs/
+build/
+dist/
+.Python
+pip-wheel-metadata/
+
+# Virtual environments / uv
+.venv/
+venv/
+env/
+.uv/
+uv.lock
+
+# Test / type / lint caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+coverage.xml
+
+# Alembic local artifacts
+*.sqlite3
+
+# Node / Next.js (frontend)
+node_modules/
+.next/
+out/
+.turbo/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Logs / runtime
+*.log
+logs/
+
+# Docker / local data volumes
+.docker/
+data/
+minio-data/
+postgres-data/
