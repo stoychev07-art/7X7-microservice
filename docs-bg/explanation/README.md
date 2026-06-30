@@ -1,26 +1,26 @@
-# Обяснителни документи — „какво получавате“ за всеки етап
+# Explanation docs — "what you get" per milestone
 
-Ръководства на ясен език, които обясняват за всеки етап от изграждането от нулата **какво
-платформата реално може да прави, след като бъде реализирана, и как работи** — за хората,
-които се включват в проекта, и за бъдещи AI изпълнения. Те са четимото допълнение към
-формалните спецификации в `docs/` и поетапните планове за изграждане в `plans/`.
+Plain-language guides that explain, for each milestone of the greenfield build, **what the
+platform can actually do once it's implemented and how it works** — for humans onboarding and
+for future AI runs. They are the readable companion to the formal specs in `docs/` and the
+step-by-step build plans in `plans/`.
 
-Всеки документ следва една и съща структура: резултат в едно изречение → какво съществува
-(конкретно) → мисловен модел → как работи (с диаграми) → идеи, които си струва да се усвоят
-→ защо този ред → как ще разберете, че работи → какво НЕ Е.
+Each doc follows the same shape: one-sentence outcome → what exists (concretely) → mental model
+→ how it works (with diagrams) → ideas worth internalizing → why this order → how you'll know it
+works → what it is NOT.
 
-## Етапите
+## The milestones
 
-| Документ | Етап | Какво получавате |
+| Doc | Milestone | What you get |
 |---|---|---|
-| [`m0-m1-what-you-get.md`](./m0-m1-what-you-get.md) | M0 + M1 | Основа (uv monorepo, `x7-common`, infra, CI) + първи работещ вертикален срез: gateway + identity-service + model-gateway. Login → JWT → измерено LLM извикване. |
-| [`m2-what-you-get.md`](./m2-what-you-get.md) | M2 | AI работното пространство: agent-service (LangGraph чат, инструменти, прекъсвания за одобрение) + knowledge-service (ingest + RAG търсене). |
-| [`m3-what-you-get.md`](./m3-what-you-get.md) | M3 | Структурирани данни + документи: registry-service (динамични таблици, канонични роли) + document-service (шаблони, PDF/Excel, цени, KSS). |
-| [`m4-what-you-get.md`](./m4-what-you-get.md) | M4 | Поддържащият слой: billing-service (токени + Stripe), integration-service (Google/email/WebDAV), platform-service (известия/поддръжка/одит/настройки). |
-| [`m5-what-you-get.md`](./m5-what-you-get.md) | M5 | Уеб приложението: едно Next.js приложение (tenant `/` + `/admin`), генериран TS клиент, чат работно пространство със SSE + карти за одобрение. |
-| [`m6-what-you-get.md`](./m6-what-you-get.md) | M6 | Истински ERP (след parity, net-new): business-service — типизирано фактуриране, складова книга, разходи. |
+| [__CODE_0__](./m0-m1-what-you-get.md) | M0 + M1 | Foundation (uv monorepo, `x7-common`, infra, CI) + first runnable slice: gateway + identity-service + model-gateway. Login → JWT → metered LLM call. |
+| [__CODE_2__](./m2-what-you-get.md) | M2 | The AI workspace: agent-service (LangGraph chat, tools, approval interrupts) + knowledge-service (ingest + RAG search). |
+| [__CODE_3__](./m3-what-you-get.md) | M3 | Structured data + documents: registry-service (dynamic tables, canonical roles) + document-service (templates, PDF/Excel, prices, KSS). |
+| [__CODE_4__](./m4-what-you-get.md) | M4 | Supporting plane: billing-service (tokens + Stripe), integration-service (Google/email/WebDAV), platform-service (notifications/support/audit/settings). |
+| [__CODE_5__](./m5-what-you-get.md) | M5 | The web app: one Next.js application (tenant `/` + `/admin`), generated TS client, chat workspace with SSE + approval cards. |
+| [__CODE_8__](./m6-what-you-get.md) | M6 | Real ERP (post-parity, net-new): business-service — typed invoicing, inventory ledger, spendings. |
 
-## Как етапите се надграждат
+## How the milestones build on each other
 
 ```mermaid
 flowchart LR
@@ -34,16 +34,14 @@ flowchart LR
     m0m1 --> m2 --> m3 --> m4 --> m5 --> m6
 ```
 
-## Къде се вписват сред останалите документи
+## Where these fit among the other docs
 
-- **`docs/01`–`docs/08`** — авторитетната архитектурна спецификация (преглед, каталог на
-  услугите, agent platform, функционално покритие, patterns, графи на зависимости, дизайн на
-  базата данни).
-- **`docs/services/*/README.md`** — договори и checklists за всяка услуга.
-- **`docs/libs/common/README.md`** — договорът на споделеното ядро `x7-common`.
-- **`plans/`** — изпълнимите поетапни планове за изграждане (с псевдокод).
-- **`docs/explanation/`** (тази папка) — повествователният слой „защо и какво получавате“.
+- **`docs/01`–`docs/08`** — the authoritative architecture spec (overview, service catalog,
+  agent platform, functional coverage, patterns, dependency graphs, database design).
+- **`docs/services/*/README.md`** — per-service contracts and checklists.
+- **`docs/libs/common/README.md`** — the `x7-common` shared-kernel contract.
+- **`plans/`** — the executable, step-by-step build plans (with pseudo-code).
+- **`docs/explanation/`** (this folder) — the "why and what you get" narrative layer.
 
-> Източникът на истината за *какво трябва да се изгради* е `docs/` + `plans/`. Тези
-> обяснителни документи са ориентационният слой; ако някога се разминават със спецификациите,
-> спецификациите печелят.
+> Source of truth for *what to build* is `docs/` + `plans/`. These explanation docs are the
+> orientation layer; if they ever disagree with the specs, the specs win.

@@ -1,25 +1,25 @@
-# 07 — Графи на зависимостите
+# 07 — Dependency Graphs
 
-Всяка зависимост в системата, начертана. Раздели 1–4 покриват **цялата система** от
-четири ъгъла (пълна картина, синхронен HTTP, асинхронни събития, инфраструктура). Раздел 5
-дава **по една графа за всяка услуга**, показваща вътрешната ѝ (in-service) структура и всяка
-външна зависимост — callers, callees, events, infrastructure и third-party systems.
+Every dependency in the system, drawn. Section 1–4 cover the **whole system** from four
+angles (full picture, synchronous HTTP, asynchronous events, infrastructure). Section 5
+gives **one graph per service** showing its internal (in-service) structure and every
+external dependency it has — callers, callees, events, infrastructure, and third-party
+systems.
 
-Легенда, използвана навсякъде:
+Legend used throughout:
 
-| Edge style | Значение |
+| Edge style | Meaning |
 |---|---|
-| `==>` thick arrow | Основен път на client traffic |
-| `-->` solid arrow | Синхронен HTTP call (internal network, service tokens) |
-| `-.->` dashed arrow | Асинхронно event (Redis Streams, at-least-once) |
-| cylinder node | Data store, притежаван изключително от една услуга |
+| `==>` thick arrow | Primary client traffic path |
+| `-->` solid arrow | Synchronous HTTP call (internal network, service tokens) |
+| `-.->` dashed arrow | Asynchronous event (Redis Streams, at-least-once) |
+| cylinder node | Data store owned exclusively by one service |
 
 ---
-
 ## 1. Whole-system dependency graph
 
-Всичко на едно платно: clients, gateway, всички 11 услуги, event bus, owned databases,
-shared infrastructure и third-party systems.
+Everything on one canvas: clients, gateway, all 11 services, the event bus, owned
+databases, shared infrastructure, and third-party systems.
 
 ```mermaid
 flowchart TB
@@ -102,22 +102,21 @@ flowchart TB
     style bus fill:#fce8e8,stroke:#c0392b
 ```
 
-Насоки за четене:
+Reading hints:
 
-- **agent-service е единственият fan-out hub** (подчертан) — трябва да достига всичко,
-  защото tools докосват всичко. Всяка друга услуга държи synchronous fan-out ≤ 2.
-- **identity-service и registry-service са leaf services** за synchronous calls —
-  не викат друга internal service.
-- Всички услуги споделят три инфраструктурни елемента (собствен Postgres DB, Redis и
-  `x7-common` package); само knowledge-service и document-service докосват object storage.
+- **agent-service is the only fan-out hub** (highlighted) — it must reach everything,
+  because tools touch everything. Every other service keeps its synchronous fan-out ≤ 2.
+- **identity-service and registry-service are leaf services** for synchronous calls —
+  they call no other internal service.
+- All services share three pieces of infrastructure (own Postgres DB, Redis, and the
+  `x7-common` package); only knowledge-service and document-service touch object storage.
 
 ---
-
 ## 2. Synchronous HTTP dependency graph
 
-Само request/response edges, с описание за какво е всеки call. Стрелка `A --> B` означава,
-че *A се чупи, ако B е down* (modulo retries/timeouts) — това е графата, която има значение за
-deployment ordering и failure-mode analysis.
+Only request/response edges, with what each call is for. An arrow `A --> B` means *A
+breaks if B is down* (modulo retries/timeouts) — this is the graph that matters for
+deployment ordering and failure-mode analysis.
 
 ```mermaid
 flowchart LR
@@ -159,38 +158,37 @@ flowchart LR
     style agent fill:#fff3d6,stroke:#cc9a06
 ```
 
-**Depth check** — най-дългата synchronous chain е 3 hops:
-`gateway → agent-service → business-service → document-service` (invoice tool, който
-render-ва PDF). Няма cycles; графата е DAG.
+**Depth check** — the longest synchronous chain is 3 hops:
+`gateway → agent-service → business-service → document-service` (invoice tool that
+renders a PDF). No cycles exist; the graph is a DAG.
 
-| Услуга | Sync fan-out (calls) | Sync fan-in (called by) |
+| Service | Sync fan-out (calls) | Sync fan-in (called by) |
 |---|---|---|
-| gateway | 1 (identity JWKS) + proxy | само clients |
+| gateway | 1 (identity JWKS) + proxy | clients only |
 | identity-service | 0 — leaf | gateway, platform |
-| agent-service | 7 — hub-ът | gateway, future channel adapters |
-| model-gateway | 0 internal (само LLM APIs) | agent, knowledge, document |
+| agent-service | 7 — the hub | gateway, future channel adapters |
+| model-gateway | 0 internal (LLM APIs only) | agent, knowledge, document |
 | knowledge-service | 2 (model-gw, integration) | agent, gateway |
 | registry-service | 0 — leaf | agent, business, document, gateway |
 | business-service | 2 (registry, document) | agent, gateway |
 | document-service | 2 (model-gw, registry) | agent, business, gateway |
-| billing-service | 0 internal (само Stripe) | agent, platform, gateway |
-| integration-service | 0 internal (само external systems) | agent, knowledge, gateway |
+| billing-service | 0 internal (Stripe only) | agent, platform, gateway |
+| integration-service | 0 internal (external systems only) | agent, knowledge, gateway |
 | platform-service | 2 (identity, billing) | gateway |
 
-Една зависимост умишлено липсва от тази matrix: **service-token minting**. Всяка
-услуга, която прави internal calls, получава short-lived tokens от identity-service, но
-callers кешират tokens до expiry, а receivers ги verify-ват локално срещу
-service-token JWKS — така identity-service стои на token-*renewal* path-а, никога на
-per-request path-а (виж [01 §6](./01-architecture-overview.md#6-identity-tenancy-and-authorization)).
+One dependency is deliberately absent from this matrix: **service-token minting**. Every
+service that makes internal calls obtains short-lived tokens from identity-service, but
+callers cache tokens until expiry and receivers verify them locally against the
+service-token JWKS — so identity-service sits on the token-*renewal* path, never the
+per-request path (see [01 §6](./01-architecture-overview.md#6-identity-tenancy-and-authorization)).
 
 ---
-
 ## 3. Event (asynchronous) dependency graph
 
-Redis Streams topics с consumer groups. Producers publish-ват facts и продължават;
-consumers реагират независимо и idempotently. Event edge е *soft* dependency:
-ако consumer е down, events се нареждат в queue и се обработват при recovery — нищо upstream
-не се чупи.
+Redis Streams topics with consumer groups. Producers publish facts and move on;
+consumers react independently and idempotently. An event edge is a *soft* dependency:
+if the consumer is down, events queue and are processed on recovery — nothing upstream
+breaks.
 
 ```mermaid
 flowchart LR
@@ -225,24 +223,23 @@ flowchart LR
     style bus fill:#fce8e8,stroke:#c0392b
 ```
 
-| Topic | Producer | Consumers | Hard или soft? |
+| Topic | Producer | Consumers | Hard or soft? |
 |---|---|---|---|
-| `token.usage` | model-gateway | billing-service | Soft — metering наваксва след downtime |
-| `tenant.created` | identity-service | registry-service, billing-service | Soft — seeding/bonus се забавя, не се губи |
-| `user.registered` | identity-service | няма още (reserved for onboarding/analytics) | Soft |
-| `document.ingested` | knowledge-service | agent-service | Soft — cache bust се забавя |
-| `invoice.issued` | business-service | platform-service | Soft — notification се забавя |
+| `token.usage` | model-gateway | billing-service | Soft — metering catches up after downtime |
+| `tenant.created` | identity-service | registry-service, billing-service | Soft — seeding/bonus delayed, not lost |
+| `user.registered` | identity-service | none yet (reserved for onboarding/analytics) | Soft |
+| `document.ingested` | knowledge-service | agent-service | Soft — cache bust delayed |
+| `invoice.issued` | business-service | platform-service | Soft — notification delayed |
 | `stock.low` | business-service | platform-service | Soft |
-| `notification.requested` | any service | platform-service | Soft — email queue с retry |
+| `notification.requested` | any service | platform-service | Soft — email queue with retry |
 | `audit.event` | any service | platform-service | Soft — audit sink |
 
 ---
-
 ## 4. Infrastructure dependency graph
 
-Какво трябва на всяка услуга, за да boot-не и да обслужва. Всяка услуга допълнително инсталира
+What each service needs to boot and serve. Every service additionally installs the
 `x7-common` shared kernel (config, auth plumbing, pooled httpx, event bus client,
-observability) — build-time dependency, не runtime hop.
+observability) — a build-time dependency, not a runtime hop.
 
 ```mermaid
 flowchart TB
@@ -292,37 +289,37 @@ flowchart TB
     svcs -.-> common
 ```
 
-| Услуга | Собствена база | Redis usage | Object storage | Third-party |
+| Service | Own database | Redis usage | Object storage | Third-party |
 |---|---|---|---|---|
 | gateway | — | rate-limit buckets, JWKS cache | — | — |
 | identity-service | `identity` | events, token-cleanup queue | — | Google OAuth, EIK registers |
-| agent-service | `agent` (+ checkpoints) | events, retention queues | — | — (всичко през services) |
+| agent-service | `agent` (+ checkpoints) | events, retention queues | — | — (everything via services) |
 | model-gateway | `modelgw` | events, balance-check queue | — | Anthropic, OpenAI |
-| knowledge-service | `knowledge` (pgvector) | events, embed/sync queues, active project | originals | — (Drive/WebDAV през integration-service) |
+| knowledge-service | `knowledge` (pgvector) | events, embed/sync queues, active project | originals | — (Drive/WebDAV via integration-service) |
 | registry-service | `registry` | event consumption | — | — |
 | business-service | `business` | events, sweep queues | — | — |
-| document-service | `document` | import queue | artifacts (signed URLs) | — (Chromium е in-process) |
+| document-service | `document` | import queue | artifacts (signed URLs) | — (Chromium is in-process) |
 | billing-service | `billing` | events, top-up/rollup queues | — | Stripe |
 | integration-service | `integration` | health-check queue | — | Google, IMAP/SMTP, WebDAV |
 | platform-service | `platform` | events, email send queue | — | Brevo, Telegram Bot API |
 
 ---
-
 ## 5. Per-service dependency graphs
 
-Всяка графа показва три неща едновременно:
+Each graph shows three things at once:
 
-1. **In-service dependencies** (център) — hexagonal layering вътре в услугата:
-   routes/workers → domain services → ports ← adapters. Стрелките вътре в service box-а
-   следват фиксираната dependency direction; adapters *implement*-ват ports (dashed).
-2. **Inbound** (ляво) — кой вика тази услуга и защо.
-3. **Outbound** (дясно) — internal services, infrastructure и third-party systems, от които
-   услугата зависи, плюс produced/consumed events.
+1. **In-service dependencies** (center) — the hexagonal layering inside the service:
+   routes/workers → domain services → ports ← adapters. Arrows inside the service box
+   follow the fixed dependency direction; adapters *implement* ports (dashed).
+2. **Inbound** (left) — who calls this service and why.
+3. **Outbound** (right) — internal services, infrastructure, and third-party systems this
+   service depends on, plus events produced/consumed.
 
 ### 5.1 gateway
 
-Без база, без domain logic — чист edge. Единствената му hard internal dependency е
-JWKS endpoint-ът на identity-service (cached, така че кратък identity downtime не сваля edge-а).
+No database, no domain logic — pure edge. Its only hard internal dependency is
+identity-service's JWKS endpoint (cached, so brief identity downtime does not take the
+edge down).
 
 ```mermaid
 flowchart LR
@@ -353,17 +350,18 @@ flowchart LR
     rl --> rd
 ```
 
-| Посока | Зависимост | Failure impact |
+| Direction | Dependency | Failure impact |
 |---|---|---|
-| Outbound | identity-service JWKS | Cached — понася кратък outage; cold start има нужда от него |
-| Outbound | Redis | Rate limiting деградира (fail-open или fail-closed според config) |
-| Outbound | всяка услуга | Per-route: само този prefix връща 502 |
-| Inbound | всички clients | Single point of entry — пуснете ≥ 2 replicas първо |
+| Outbound | identity-service JWKS | Cached — tolerates brief outage; cold start needs it |
+| Outbound | Redis | Rate limiting degrades (fail-open or fail-closed by config) |
+| Outbound | every service | Per-route: only that prefix 502s |
+| Inbound | all clients | Single point of entry — run ≥ 2 replicas first |
 
 ### 5.2 identity-service
 
-Умишлен **leaf**: не вика internal service, така че auth path никога няма transitive
-dependency. Изпраща OTP/reset emails чрез publish на events, никога чрез държане на SMTP credentials.
+A deliberate **leaf**: calls no internal service, so the auth path never has a
+transitive dependency. Sends OTP/reset emails by publishing events, never by holding
+SMTP credentials.
 
 ```mermaid
 flowchart LR
@@ -417,18 +415,18 @@ flowchart LR
     id -.->|"tenant.created · user.registered ·<br/>audit.event · notification.requested<br/>(OTP / reset emails)"| bus
 ```
 
-| Посока | Зависимост | Бележки |
+| Direction | Dependency | Notes |
 |---|---|---|
-| Calls (internal) | **none** — leaf service | Държи auth path без dependencies |
+| Calls (internal) | **none** — leaf service | Keeps the auth path dependency-free |
 | Calls (external) | Google OAuth, EIK registers | Login federation; company onboarding lookup |
-| Events out | `tenant.created`, `user.registered`, `audit.event`, `notification.requested` | Email delivery е работа на platform-service |
-| Inbound | gateway (JWKS, auth), platform-service, any service (service tokens) | JWKS consumers кешират keys |
+| Events out | `tenant.created`, `user.registered`, `audit.event`, `notification.requested` | Email delivery is platform-service's job |
+| Inbound | gateway (JWKS, auth), platform-service, any service (service tokens) | JWKS consumers cache keys |
 
 ### 5.3 agent-service
 
-**Единственият fan-out hub** в системата — всяка tool target е port + httpx adapter, така че
-targets могат да се flip-ват (monolith → new service) по време на migration без промяна в
-domain-а. Conversations са internal module, не услуга.
+The **only fan-out hub** in the system — every tool target is a port + httpx adapter so
+targets can be flipped (monolith → new service) during migration without touching the
+domain. Conversations are an internal module, not a service.
 
 ```mermaid
 flowchart LR
@@ -494,18 +492,18 @@ flowchart LR
     w1 --> rd
 ```
 
-| Посока | Зависимост | Бележки |
+| Direction | Dependency | Notes |
 |---|---|---|
-| Calls | model-gateway, knowledge, registry, business, document, billing, integration | Всички зад ports — tool targets са swappable |
-| Events out / in | `audit.event` / `document.ingested` | Cache bust е soft |
-| Inbound | gateway, future channel adapters | Channels използват chat API, никога store-а |
-| Critical path | model-gateway | Chat turn не може да завърши без него |
+| Calls | model-gateway, knowledge, registry, business, document, billing, integration | All behind ports — tool targets are swappable |
+| Events out / in | `audit.event` / `document.ingested` | Cache bust is soft |
+| Inbound | gateway, future channel adapters | Channels use the chat API, never the store |
+| Critical path | model-gateway | A chat turn cannot complete without it |
 
 ### 5.4 model-gateway
 
-Единствената услуга, която държи LLM provider keys. Internal fan-out: нула — тя излиза само
-към providers. Metering е структурен side effect: всяко completion emit-ва `token.usage`,
-така че billing не може да бъде заобиколен.
+The only service holding LLM provider keys. Internal fan-out: zero — it only goes
+outward to providers. Metering is a structural side effect: every completion emits
+`token.usage`, so billing cannot be bypassed.
 
 ```mermaid
 flowchart LR
@@ -558,18 +556,18 @@ flowchart LR
     mg -.->|"token.usage (every call) ·<br/>audit.event ·<br/>notification.requested (balance alert)"| bus
 ```
 
-| Посока | Зависимост | Бележки |
+| Direction | Dependency | Notes |
 |---|---|---|
-| Calls (internal) | **none** | Leaf за internal traffic |
-| Calls (external) | Anthropic, OpenAI | Provider switch = config change тук, invisible за callers |
-| Events out | `token.usage`, `audit.event` | Metering не е optional за callers |
-| Inbound | agent (най-горещият path), knowledge, document | Streaming трябва да добавя near-zero latency |
+| Calls (internal) | **none** | Leaf for internal traffic |
+| Calls (external) | Anthropic, OpenAI | Provider switch = config change here, invisible to callers |
+| Events out | `token.usage`, `audit.event` | Metering is not optional for callers |
+| Inbound | agent (hottest path), knowledge, document | Streaming must add near-zero latency |
 
 ### 5.5 knowledge-service
 
-Ingestion pipeline-ът е in-service (parse → chunk → embed → index); двете outbound
-dependencies са embeddings (model-gateway) и file IO за sync sources (integration-service).
-Vector store-ът е скрит зад port — pgvector сега, swappable.
+The ingestion pipeline is in-service (parse → chunk → embed → index); the two outbound
+dependencies are embeddings (model-gateway) and file IO for sync sources
+(integration-service). The vector store hides behind a port — pgvector now, swappable.
 
 ```mermaid
 flowchart LR
@@ -621,17 +619,17 @@ flowchart LR
     kn -.->|"document.ingested"| bus
 ```
 
-| Посока | Зависимост | Бележки |
+| Direction | Dependency | Notes |
 |---|---|---|
-| Calls | model-gateway (embed), integration-service (sync IO) | И двете са само по ingestion paths — search itself е self-contained |
+| Calls | model-gateway (embed), integration-service (sync IO) | Both only on ingestion paths — search itself is self-contained |
 | Events out | `document.ingested` | Consumed by agent (cache bust) + platform |
-| Inbound | agent-service, gateway | Search е на agent tool path-а |
-| Infra | pgvector DB, S3, Redis | Единствена услуга (заедно с document), която има нужда от object storage |
+| Inbound | agent-service, gateway | Search is on the agent tool path |
+| Infra | pgvector DB, S3, Redis | Only service (with document) needing object storage |
 
 ### 5.6 registry-service
 
-Синхронен **leaf** без jobs — най-простият runtime profile в системата. Единственото му
-асинхронно задължение е да consume-ва `tenant.created`, за да seed-не system registries.
+A synchronous **leaf** with no jobs — the simplest runtime profile in the system. Its
+only asynchronous duty is consuming `tenant.created` to seed system registries.
 
 ```mermaid
 flowchart LR
@@ -679,18 +677,18 @@ flowchart LR
     bus -.->|"tenant.created"| ev
 ```
 
-| Посока | Зависимост | Бележки |
+| Direction | Dependency | Notes |
 |---|---|---|
-| Calls (internal) | **none** — leaf | Няма и jobs; напълно synchronous domain |
-| Events in | `tenant.created` | Seed-ва work pipeline, invoices, tasks registries |
-| Inbound | agent, business, document, gateway | Най-високият sync fan-in след gateway-а |
+| Calls (internal) | **none** — leaf | No jobs either; fully synchronous domain |
+| Events in | `tenant.created` | Seeds work pipeline, invoices, tasks registries |
+| Inbound | agent, business, document, gateway | Highest sync fan-in after the gateway |
 
 ### 5.7 business-service
 
-Typed ERP domains с hard invariants. Две outbound dependencies: registry-service за
-counterparty resolution и document-service за PDF rendering + price reads. Issued
-invoices snapshot-ват counterparty data — така registry outage никога не corrupt-ва legal
-document, а само блокира нови lookups.
+Typed ERP domains with hard invariants. Two outbound dependencies: registry-service for
+counterparty resolution and document-service for PDF rendering + price reads. Issued
+invoices snapshot counterparty data — so a registry outage never corrupts a legal
+document, only blocks new lookups.
 
 ```mermaid
 flowchart LR
@@ -738,17 +736,17 @@ flowchart LR
     biz -.->|"invoice.issued · stock.low"| bus
 ```
 
-| Посока | Зависимост | Бележки |
+| Direction | Dependency | Notes |
 |---|---|---|
-| Calls | registry-service, document-service | Counterparty IDs + display snapshots се пазят локално при issue |
-| Events out | `invoice.issued`, `stock.low` | Превръщат се в notifications от platform-service |
+| Calls | registry-service, document-service | Counterparty IDs + display snapshots stored locally on issue |
+| Events out | `invoice.issued`, `stock.low` | Turned into notifications by platform-service |
 | Inbound | agent-service (write tools → approval interrupts), gateway | |
 
 ### 5.8 document-service
 
-Rendering-ът е изолиран тук умишлено (Chromium worker pool с твърди memory/time limits).
-Outbound: model-gateway за AI-assisted imports/formatting и registry-service за row data,
-която захранва document generation.
+Rendering is isolated here on purpose (Chromium worker pool with hard memory/time
+limits). Outbound: model-gateway for AI-assisted imports/formatting and registry-service
+for row data feeding document generation.
 
 ```mermaid
 flowchart LR
@@ -801,17 +799,17 @@ flowchart LR
     w1 --> rd
 ```
 
-| Посока | Зависимост | Бележки |
+| Direction | Dependency | Notes |
 |---|---|---|
-| Calls | model-gateway (AI import), registry-service (row data) | И двете са optional per endpoint — plain rendering не се нуждае от нито едното |
-| Inbound | agent, business, gateway | business → doc е на invoice-issue path-а |
-| Infra | document DB, S3, Redis, in-process Chromium | Artifacts никога не докосват local disk |
+| Calls | model-gateway (AI import), registry-service (row data) | Both optional per endpoint — plain rendering needs neither |
+| Inbound | agent, business, gateway | business → doc is on the invoice-issue path |
+| Infra | document DB, S3, Redis, in-process Chromium | Artifacts never touch local disk |
 
 ### 5.9 billing-service
 
-Повече слуша, отколкото говори: metering и welcome bonus идват като events; единствените
-outbound calls отиват към Stripe. Webhook-ът влиза през gateway-а със запазено raw body и
-се signature-verify-ва тук.
+Listens more than it talks: metering and the welcome bonus arrive as events; the only
+outbound calls go to Stripe. The webhook enters through the gateway with raw body
+preserved and is signature-verified here.
 
 ```mermaid
 flowchart LR
@@ -864,18 +862,18 @@ flowchart LR
     bill -.->|"notification.requested (alerts) ·<br/>audit.event"| bus
 ```
 
-| Посока | Зависимост | Бележки |
+| Direction | Dependency | Notes |
 |---|---|---|
-| Calls (internal) | **none** | Leaf за internal sync traffic |
-| Calls (external) | Stripe | Най-рисковият код — idempotent webhooks, stored event IDs |
+| Calls (internal) | **none** | Leaf for internal sync traffic |
+| Calls (external) | Stripe | Highest-risk code — idempotent webhooks, stored event IDs |
 | Events in / out | `token.usage`, `tenant.created` / `notification.requested`, `audit.event` | Ledger keyed by event ID |
 | Inbound | agent (balance check), platform, gateway | |
 
 ### 5.10 integration-service
 
-Външната ръка на платформата: всяка external connectivity concern (OAuth scopes,
-IMAP/SMTP, WebDAV) живее зад folder-discovered adapters с uniform contract. Не вика
-internal service.
+The platform's outward arm: every external connectivity concern (OAuth scopes,
+IMAP/SMTP, WebDAV) lives behind folder-discovered adapters with a uniform contract.
+Calls no internal service.
 
 ```mermaid
 flowchart LR
@@ -926,17 +924,17 @@ flowchart LR
     w1 --> rd
 ```
 
-| Посока | Зависимост | Бележки |
+| Direction | Dependency | Notes |
 |---|---|---|
-| Calls (internal) | **none** | Leaf за internal sync traffic |
-| Calls (external) | Google, IMAP/SMTP, WebDAV | Всяка зад една adapter folder |
+| Calls (internal) | **none** | Leaf for internal sync traffic |
+| Calls (external) | Google, IMAP/SMTP, WebDAV | Each behind one adapter folder |
 | Inbound | agent (email/drive tools), knowledge (sync IO), gateway | |
 
 ### 5.11 platform-service
 
-Event sink-ът на системата — четири low-traffic модула, които предимно consume-ват това,
-което други услуги publish-ват. Единствената услуга, която държи email (Brevo) и ops-alert
-(Telegram) credentials.
+The event sink of the system — four low-traffic modules that mostly consume what other
+services publish. Only service holding email (Brevo) and ops-alert (Telegram)
+credentials.
 
 ```mermaid
 flowchart LR
@@ -992,46 +990,47 @@ flowchart LR
     bus -.->|"notification.requested ·<br/>invoice.issued · stock.low ·<br/>audit.event"| ev
 ```
 
-| Посока | Зависимост | Бележки |
+| Direction | Dependency | Notes |
 |---|---|---|
-| Calls | identity-service (lookups), billing-service (usage views) | И двете read-only, admin/UI paths |
-| Calls (external) | Brevo, Telegram Bot API | Единствен holder на тези credentials |
-| Events in | `notification.requested`, `invoice.issued`, `stock.low`, `audit.event` | Всички consumers са idempotent (dedupe keys) |
-| Inbound | само gateway | Най-нисък sync fan-in в системата |
+| Calls | identity-service (lookups), billing-service (usage views) | Both read-only, admin/UI paths |
+| Calls (external) | Brevo, Telegram Bot API | Sole holder of these credentials |
+| Events in | `notification.requested`, `invoice.issued`, `stock.low`, `audit.event` | All consumers idempotent (dedupe keys) |
+| Inbound | gateway only | Lowest sync fan-in in the system |
 
 ---
+## 6. Dependency rules (the invariants behind the graphs)
 
-## 6. Dependency rules (инвариантите зад графите)
+These are the rules the graphs above must keep satisfying as the system grows — review
+any new edge against them:
 
-Това са правилата, които графите по-горе трябва да продължат да спазват, докато системата
-расте — review-вайте всеки нов edge спрямо тях:
-
-1. **Един hub.** Само agent-service може да има sync fan-out > 2. Втори hub означава, че
-   boundary е начертан погрешно.
-2. **Leaves остават leaves.** identity-service и registry-service не викат internal
-   service. Auth path-ът и data backbone-ът не трябва да придобиват transitive
-   dependencies. (Service-token minting е единственото санкционирано inbound exception за
-   identity — и е cached и locally verified точно за да не стане per-request edge.)
-3. **Без cycles.** Sync HTTP graph е DAG (§2). Ако new feature изглежда да има нужда от
-   `A → B → A`, shared concept-ът принадлежи в едната услуга — или в event.
-4. **External systems имат точно един owner.** LLM providers → model-gateway; Stripe →
+1. **One hub.** Only agent-service may have sync fan-out > 2. A second hub means a
+   boundary was drawn wrong.
+2. **Leaves stay leaves.** identity-service and registry-service call no internal
+   service. The auth path and the data backbone must not acquire transitive
+   dependencies. (Service-token minting is the one sanctioned inbound exception for
+   identity — and it is cached and locally verified precisely so it never becomes a
+   per-request edge.)
+3. **No cycles.** The sync HTTP graph is a DAG (§2). If a new feature seems to need
+   `A → B → A`, the shared concept belongs in one of them — or in an event.
+4. **External systems have exactly one owner.** LLM providers → model-gateway; Stripe →
    billing; Google/IMAP/WebDAV → integration; Brevo/Telegram → platform; OAuth login +
-   EIK → identity. Никоя втора услуга не може да държи тези credentials.
-5. **Databases са private.** Никой edge не може да сочи към cylinder на друга услуга.
-   Cross-service data се движи само през HTTP или events.
-6. **Events за facts, HTTP за questions.** Ако caller-ът има нужда от answer, за да продължи,
-   това е sync call; ако информира света, това е event. Не маскирайте commands като events.
-7. **Вътре в услуга dependencies сочат навътре.** routes/workers → domain → ports;
-   adapters implement-ват ports. Domain module, който import-ва httpx или SQLAlchemy, е
+   EIK → identity. No second service may ever hold those credentials.
+5. **Databases are private.** No edge may ever point at another service's cylinder.
+   Cross-service data moves over HTTP or events only.
+6. **Events for facts, HTTP for questions.** If the caller needs an answer to proceed,
+   it's a sync call; if it's informing the world, it's an event. Don't disguise
+   commands as events.
+7. **Inside a service, dependencies point inward.** routes/workers → domain → ports;
+   adapters implement ports. A domain module importing httpx or SQLAlchemy is a
    layering bug.
-8. **`x7-common` е единственият shared code.** Build-time, без business logic. Service A да
-   import-ва code на service B е забранено във всички случаи.
+8. **`x7-common` is the only shared code.** Build-time, business-logic-free. Service A
+   importing service B's code is forbidden in all cases.
 
-## Препратки
+## References
 
 - [01 §3 — system topology](./01-architecture-overview.md#3-system-topology) ·
   [01 §7 — events](./01-architecture-overview.md#7-asynchronous-work-and-events)
 - [02 — service catalog + call matrix](./02-service-catalog.md#service-to-service-call-matrix)
 - [06 — architectural patterns](./06-architectural-patterns.md)
-- Per-service READMEs под [services/](./services/README.md) — всяка `Dependencies`
-  таблица е източникът за графите тук
+- Per-service READMEs under [services/](./services/README.md) — each `Dependencies`
+  table is the source for the graphs here

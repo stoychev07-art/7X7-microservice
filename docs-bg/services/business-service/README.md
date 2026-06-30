@@ -1,36 +1,83 @@
-# бизнес-услуга
-> Първокласна логика на домейна на ERP: фактуриране, инвентаризация и разходи - субектите, чиито> инвариантите трябва да бъдат наложени от код, а не от гъвкавата система за регистър.
-**Състояние:** 📋 планирано (нетно ново — без монолитен аналог, изградено след паритета) ·**Порт (dev):** 8100 ·**База данни:**`business`
+# business-service
 
-## Отговорности
-### Фактуриране- Фактури за продажби и покупки като въведени обекти с редови позиции.- **Поредно законно номериране на наемател** (изискване за България) чрез спецпоследователни редове — без пропуски, без дубликати, безопасно при едновременност.- изчисляване на ДДС; кредитни/дебитни бележки; статуси (чернова → издаден → платен/просрочен/невалиден).- **Неизменност след издаване** — корекции само чрез кредитни/дебитни бележки.- PDF изобразяване, делегирано на услугата за документи.
-### Инвентар- Артикули/SKU, складове.- Движения на запаси (получаване, издаване, прехвърляне, корекция) като **главна книга само за добавяне**;нивата на запасите са извлечени/материализирани, никога не са редактирани директно; акциите не могат да станат отрицателни.- Резервации; прагове за минимален запас →`stock.low`събития.
-### Разходи- Записи на разходите с категории и връзка с доставчик (контрагент).- Повтарящи се разходи; прости бюджети; обобщени отчети за паричните потоци.
-## API скица
+> First-class ERP domain logic: invoicing, inventory, and spendings — the entities whose
+> invariants must be enforced by code, not by the flexible registry engine.
+
+**Status:** 📋 planned (net-new — no monolith counterpart, built post-parity) ·
+**Port (dev):** 8100 ·
+**Database:** `business`
+
+## Responsibilities
+
+### Invoicing
+- Sales & purchase invoices as typed entities with line items.
+- **Sequential legal numbering per tenant** (Bulgarian requirement) via dedicated
+  sequence rows — no gaps, no duplicates, safe under concurrency.
+- VAT calculation; credit/debit notes; statuses (draft → issued → paid/overdue/void).
+- **Immutability after issue** — corrections only via credit/debit notes.
+- PDF rendering delegated to document-service.
+
+### Inventory
+- Items/SKUs, warehouses.
+- Stock movements (receipt, issue, transfer, adjustment) as an **append-only ledger**;
+  stock levels derived/materialized, never edited directly; stock cannot go negative.
+- Reservations; minimum-stock thresholds → `stock.low` events.
+
+### Spendings
+- Expense records with categories and supplier (counterparty) linkage.
+- Recurring expenses; simple budgets; cash-flow summary reports.
+
+## API sketch
+
 `GET/POST /invoices` · `POST /invoices/{id}/issue` · `POST /invoices/{id}/void` ·
 `POST /invoices/{id}/credit-note` · `GET/POST /items` · `GET/POST /warehouses` ·
 `POST /stock/movements` · `GET /stock/levels` · `GET/POST /expenses` ·
 `GET /reports/cashflow`
 
-## Притежавани данни
+## Data owned
+
 `invoices`, `invoice_lines`, `invoice_sequences`, `items`, `warehouses`,
-`stock_movements`, `stock_levels`(материализиран),`expenses`, `expense_categories`,
+`stock_movements`, `stock_levels` (materialized), `expenses`, `expense_categories`,
 `budgets`.
 
-## Зависимости
-| Посока | Какво |
-|---|---|
-| Обаден от | агентска услуга (инструменти:`invoice_create`, `invoice_list`, `inventory_check`, `stock_move`, `expense_add`, `expense_summary`), шлюз (ПИ) |
-| Обаждания | регистър-услуга (търсене на контрагента по канонична роля), документ-услуга (PDF изобразяване, четене на ценова листа) |
-| Събития извън | `invoice.issued`, `stock.low`(→ известия за платформа-услуга) |
-| работни места | проверка на просрочени фактури, проверка на ниски наличности, генериране на повтарящи се разходи |
+## Dependencies
 
-## Бележки по дизайна
-- **Правило за граница**: ако грешна стойност е просто объркана → услуга за регистър; ако е незаконноили финансово неправилно → тук. Регистърът на сделката препраща фактурите по ID,никога не ги дублира.- **Секвениране на миграция**: по време на паритет на удушвач системата "Фактури" на монолитапортовете на регистъра непроменени; след като тази услуга бъде изпратена, нейните редове преминават във въведени фактури(колони с канонична роля правят картографирането механично) — вижте  [04 §6](../../04-functional-coverage.md#6-new-capabilities-beyond-parity-business-service).
-- Контрагентите остават в регистър-услуга (тенант-гъвкав); тази услуга съхранява самотехните идентификатори + денормализирани моментни снимки на дисплея на издадени фактури (юридическите документи не трябвапромяна, когато записът на контрагента се редактира).
-## Контролен списък за внедряване
-- [ ] Схема + Алембик; разпределение на последователността на фактурите (ИЗБЕРЕТЕ... ЗА АКТУАЛИЗИРАНЕ на наемател/серия)- [ ] Крайни точки за идемпотентен запис — дедупиране на ключа за идемпотентност на повикващия (запис на агентинструменти изпращат ключ, извлечен от одобрение); номерирането на фактурите никога не трябва да се разпределя двойнона повторение- [ ] Състояние на жизнения цикъл на фактурата + налагане на неизменност + ДДС математика (тествано трудно)- [ ] Потоци кредитни/дебитни известия- [ ] Книга за движение на акции + материализирани нива + ограничение за неотрицателност- [ ] CRUD за разходи + повтаряща се задача за генериране + отчет за паричните потоци- [ ] `invoice.issued` / `stock.low`събития- [] Инструменти на агент, свързани в услугата на агент (инструменти за писане → прекъсване на одобрение)- [ ] Изобразяване на PDF чрез шаблон за услуга за документи
-## Препратки
-- [02 — запис в каталога на услугите + гранична таблица](../../02-service-catalog.md#business-service-8100)
-- [04 §6 — нови способности извън паритета](../../04-functional-coverage.md#6-new-capabilities-beyond-parity-business-service)
-- [07 §5.7 — графика на зависимост](../../07-dependency-graphs.md#57-business-service)
+| Direction | What |
+|---|---|
+| Called by | agent-service (tools: `invoice_create`, `invoice_list`, `inventory_check`, `stock_move`, `expense_add`, `expense_summary`), gateway (UI) |
+| Calls | registry-service (counterparty lookup by canonical role), document-service (PDF render, price list reads) |
+| Events out | `invoice.issued`, `stock.low` (→ platform-service notifications) |
+| Jobs | overdue-invoice sweep, low-stock check, recurring-expense generation |
+
+## Design notes
+
+- **Boundary rule**: if a wrong value is merely messy → registry-service; if it is illegal
+  or financially incorrect → here. The deal-pipeline registry references invoices by ID,
+  never duplicates them.
+- **Migration sequencing**: during strangler parity the monolith's "Фактури" system
+  registry ports unchanged; once this service ships, its rows graduate into typed invoices
+  (canonical-role columns make the mapping mechanical) — see
+  [04 §6](../../04-functional-coverage.md#6-new-capabilities-beyond-parity-business-service).
+- Counterparties stay in registry-service (tenant-flexible); this service stores only
+  their IDs + denormalized display snapshots on issued invoices (legal documents must not
+  change when the counterparty record is edited).
+
+## Implementation checklist
+
+- [ ] Schema + Alembic; invoice sequence allocation (SELECT … FOR UPDATE per tenant/series)
+- [ ] Idempotent write endpoints — dedupe on the caller's idempotency key (agent write
+      tools send an approval-derived key); invoice numbering must never double-allocate
+      on a replay
+- [ ] Invoice lifecycle state machine + immutability enforcement + VAT math (tested hard)
+- [ ] Credit/debit note flows
+- [ ] Stock movement ledger + materialized levels + non-negativity constraint
+- [ ] Expense CRUD + recurring generation job + cashflow report
+- [ ] `invoice.issued` / `stock.low` events
+- [ ] Agent tools wired in agent-service (write tools → approval interrupt)
+- [ ] PDF rendering via document-service template
+
+## References
+
+- [02 — service catalog entry + boundary table](../../02-service-catalog.md#business-service-8100)
+- [04 §6 — new capabilities beyond parity](../../04-functional-coverage.md#6-new-capabilities-beyond-parity-business-service)
+- [07 §5.7 — dependency graph](../../07-dependency-graphs.md#57-business-service)

@@ -57,7 +57,7 @@ must stay thin (no aggregation, no transformation) and be the first thing replic
 to it; cross-service data moves over HTTP APIs or events.
 
 **Where.** Every DB-owning service has its own logical PostgreSQL database
-(`identity`, `registry`, `knowledge`, …). The vector store (pgvector) belongs to
+(`identity`, `registry`, `knowledge`, …). The vector store (Qdrant) belongs to
 knowledge-service alone; agents query it only through the `/search` API.
 
 **Why.** The monolith's single schema with ~80 `core.*` tables let any module join any
@@ -331,19 +331,27 @@ mild friction — by design.
 
 ### 5.4 Centralized model access (the Model Gateway)
 
-**What it is.** A single service owns all LLM provider credentials and exposes a uniform
-completion/embedding API; every model call in the platform flows through it and emits a
-metering event as a side effect of the call itself.
+**What it is.** A single service owns LLM access and exposes a uniform completion/embedding
+API; every model call in the platform flows through it and emits a metering event as a side
+effect of the call itself. The service is a **thin owner backed by LiteLLM** — LiteLLM
+provides the multi-provider plumbing (routing, fallback, retries, budgets, cost) across
+cloud (Anthropic/Claude) and local (Ollama) models behind a **swappable port**; the service
+keeps only the business layer LiteLLM does not model.
 
-**Where.** model-gateway ([02](./02-service-catalog.md)); `token.usage` events consumed by
-billing-service.
+**Where.** model-gateway ([02](./02-service-catalog.md)), backed by LiteLLM
+([09 §3.2](./09-industry4z-platform-integration.md#32-llm-access--litellm-vs-model-gateway-));
+`token.usage` events consumed by billing-service.
 
-**Why.** Three structural wins: provider switching is invisible to callers; the AI kill
-switch and budgets act in one place; and **billing cannot be bypassed by a forgotten
-callsite** — the monolith metered per-callsite, which is exactly how leaks happen.
+**Why.** Structural wins: provider switching (incl. cloud↔local Ollama) is invisible to
+callers; the AI kill switch and budgets act in one place; **billing cannot be bypassed by a
+forgotten callsite** — the monolith metered per-callsite, which is exactly how leaks happen;
+and the heavy provider plumbing is **not hand-written** — LiteLLM supplies it, so we own only
+the contract, tenant-attributed metering, and the kill switch.
 
 **Trade-off.** An extra hop on the hottest path (mitigated by streaming passthrough and
-co-location), and the gateway becomes critical infrastructure — replicate it early.
+co-location); the gateway becomes critical infrastructure (replicate it early); and a second
+cost ledger (LiteLLM's) exists — resolved by treating **our `token.usage` outbox as the
+billing source of truth**, LiteLLM's log only for reconciliation.
 
 ---
 
@@ -368,4 +376,4 @@ co-location), and the gateway becomes critical infrastructure — replicate it e
 | ReAct loop | default graph | [03 §1](./03-agent-platform.md) |
 | Human-in-the-loop interrupts | approval flow | [01 flow 2](./01-architecture-overview.md), [03](./03-agent-platform.md) |
 | Capability allow-listing | tool catalog | [03 §4](./03-agent-platform.md) |
-| Centralized model access | model-gateway | [02](./02-service-catalog.md) |
+| Centralized model access | model-gateway (thin owner, backed by LiteLLM) | [02](./02-service-catalog.md), [09 §3.2](./09-industry4z-platform-integration.md) |

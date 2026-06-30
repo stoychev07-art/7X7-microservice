@@ -1,30 +1,63 @@
-# документ-услуга
-> Превръща бизнес данни в бизнес документи: визуални шаблони, PDF/Excel/Word> генериране, оферти, плюс основната ценова листа, маржове и KSS, които ги захранват.
-**Състояние:** 📋 планирано · **Порт (dev):** 8060 · **База данни:**`document`
+# document-service
 
-## Отговорности
-- Визуални шаблони на документи: модел на JSONB редактор, базиран на секции.- Рендиране на PDF чрез безглавен Chromium (изолирано тук — натоварването при рендиране никога не се конкурира сдруги услуги).- Excel (`xlsx`) и Word (`docx`) поколение;`generate_document` / `generate_excel`
-бекенд на агентски инструменти.- Изготвяне на оферта (`offer_draft`бекенд на инструмента).- **Основна ценова листа**: категории, артикули, история на цените, подпомаган от AI XLSX импорт(чрез модел-шлюз).- **Полета**: за категория/артикул, контролиран достъп;`save_margins`бекенд на инструмента.- **KSS** (сметки за строителни разходи): анализ + попълване, двупосочно пътуване в Excel.
-## API скица
-`GET/POST /templates` · `POST /render`(PDF) ·`POST /generate` ·
+> Turns business data into business documents: visual templates, PDF/Excel/Word
+> generation, offers, plus the master price list, margins, and KSS that feed them.
+
+**Status:** 📋 planned · **Port (dev):** 8060 · **Database:** `document`
+
+## Responsibilities
+
+- Visual document templates: section-based JSONB editor model.
+- PDF rendering via headless Chromium (isolated here — rendering load never competes with
+  other services).
+- Excel (`xlsx`) and Word (`docx`) generation; `generate_document` / `generate_excel`
+  agent tools backend.
+- Offer drafting (`offer_draft` tool backend).
+- **Master price list**: categories, items, price history, AI-assisted XLSX import
+  (via model-gateway).
+- **Margins**: per category/item, access-controlled; `save_margins` tool backend.
+- **KSS** (construction cost sheets): analyze + fill, Excel round-trip.
+
+## API sketch
+
+`GET/POST /templates` · `POST /render` (PDF) · `POST /generate` ·
 `GET/POST /prices/categories` · `GET/POST /prices/items` · `POST /prices/import` ·
 `GET/POST /margins` · `POST /kss/analyze` · `POST /kss/fill`
 
-## Притежавани данни
+## Data owned
+
 `document_templates`, `price_categories`, `price_items`, `price_history`,
 `price_imports`, `category_margins`, `item_margins`, `margin_access`.
-Генерирани артефакти в S3/MinIO с подписани URL адреси за изтегляне.
-## Зависимости
-| Посока | Какво |
-|---|---|
-| Обаден от | агентска услуга (документ/цена/KSS инструменти), бизнес услуга (PDF файлове за фактури, четене на цените), шлюз (UI) |
-| Обаждания | модел-шлюз (AI импорт/формат), регистър-услуга (данни за ред за генериране на документ) |
-| работни места | цена внос обработка |
+Generated artifacts in S3/MinIO with signed download URLs.
 
-## Бележки по дизайна
-- Изобразяването на Chromium трябва да работи в собствен работен пул с твърди ограничения на паметта/времето - вмонолитът Puppeteer сподели процеса на API.- Ценообразуването съществува тук (не в бизнес услугата), защото целта му е да захранва оферти/KSS;business-service чете цените през API, когато създава редове за фактури.- Артефактите никога не се записват на локален диск; поток към хранилище на обекти и връща подписанURL (докладните агенти на монолита вече следват това правило).
-## Контролен списък за внедряване
-- [ ] Модел на шаблон + CRUD; раздел JSONB валидиране на схема- [ ] Конвейер за изобразяване: шаблон + данни → HTML → Chromium PDF → S3 + подписан URL- [ ] помощници за генериране на xlsx/docx- [ ] Ценова листа CRUD + история + XLSX импортиране (подпомогнато от AI чрез шлюз на модела)- [ ] Полета с проверки за достъп- [ ] KSS анализ/попълване двупосочно (пренасяне на семантиката на Excel на монолита — тест с реални KSS файлове)- [ ] Предложете крайна точка на проект за агентския инструмент
-## Препратки
-- [02 — запис в каталога на услугите](../../02-service-catalog.md#document-service-8060)
-- [07 §5.8 — графика на зависимостта](../../07-dependency-graphs.md#58-document-service)
+## Dependencies
+
+| Direction | What |
+|---|---|
+| Called by | agent-service (document/price/KSS tools), business-service (invoice PDFs, price reads), gateway (UI) |
+| Calls | model-gateway (AI import/format), registry-service (row data for document generation) |
+| Jobs | price import processing |
+
+## Design notes
+
+- Chromium rendering should run in its own worker pool with hard memory/time limits — in
+  the monolith Puppeteer shared the API process.
+- Pricing lives here (not in business-service) because its purpose is feeding offers/KSS;
+  business-service reads prices over the API when building invoice lines.
+- Artifacts are never written to local disk; stream to object storage and return a signed
+  URL (the monolith's report agents already followed this rule).
+
+## Implementation checklist
+
+- [ ] Template model + CRUD; section JSONB schema validation
+- [ ] Render pipeline: template + data → HTML → Chromium PDF → S3 + signed URL
+- [ ] xlsx/docx generation helpers
+- [ ] Price list CRUD + history + XLSX import (AI-assisted via model-gateway)
+- [ ] Margins with access checks
+- [ ] KSS analyze/fill round-trip (port the monolith's Excel semantics — test with real KSS files)
+- [ ] Offer draft endpoint for the agent tool
+
+## References
+
+- [02 — service catalog entry](../../02-service-catalog.md#document-service-8060)
+- [07 §5.8 — dependency graph](../../07-dependency-graphs.md#58-document-service)

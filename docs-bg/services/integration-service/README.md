@@ -1,52 +1,67 @@
-# услуга за интеграция
-> Външна системна свързаност зад единен договор за адаптер с открита папка:
-> Google Workspace, IMAP/SMTP имейл, WebDAV — плюс интеграционния каталог и
-> криптиран хранилище за пълномощия.
-**Състояние:** 📋 планирано · **Порт (dev):** 8080 · **База данни:** `integration`
-## Отговорности
-- Интегриран **каталог** + жизнен цикъл на инсталиране/свързване/прекъсване на клиент.
-- **Хранилище за идентификационни данни**: всички външни идентификационни данни, криптирани AES-256-GCM, никога не се връщат
-  обикновен текст през API.
-- **Адаптери** (всяка папка с `manifest` + клас адаптер, автоматично откриване — същото
-  модел на приставка като агенти):
-  - `google` — OAuth (обхват на работното пространство), разглеждане/качване/изтегляне в Диск, четене/изпращане в Gmail
-    етикет/архив/филтър (подкрепя инструментите на агента `gmail_*`).
-  - `email` — универсални IMAP/SMTP връзки за всеки потребител, входяща кутия/четене/изпращане/преместване + изпращане на журнал
-    (подкрепя инструментите на агента `email_*`).
-  - `webdav` — CRUD за връзка, преглеждане на папка, IO на файл (консумиран от услугата за знания
-    двигател за синхронизиране).
-- Режими на администраторски достъп за интеграция: `all` / `excluded` / `exclusive`.
-- Проверки на здравето на връзката.
-## API скица
+# integration-service
+
+> External-system connectivity behind a uniform, folder-discovered adapter contract:
+> Google Workspace, IMAP/SMTP email, WebDAV — plus the integration catalog and the
+> encrypted credentials vault.
+
+**Status:** 📋 planned · **Port (dev):** 8080 · **Database:** `integration`
+
+## Responsibilities
+
+- Integration **catalog** + per-tenant install/connect/disconnect lifecycle.
+- **Credentials vault**: all external credentials encrypted AES-256-GCM, never returned in
+  plaintext over the API.
+- **Adapters** (each a folder with `manifest` + adapter class, auto-discovered — the same
+  plugin pattern as agents):
+  - `google` — OAuth (workspace scopes), Drive browse/upload/download, Gmail read/send/
+    label/archive/filter (backs the `gmail_*` agent tools).
+  - `email` — universal IMAP/SMTP per-user connections, inbox/read/send/move + send log
+    (backs the `email_*` agent tools).
+  - `webdav` — connection CRUD, folder browse, file IO (consumed by knowledge-service's
+    sync engine).
+- Admin access modes per integration: `all` / `excluded` / `exclusive`.
+- Connection health checks.
+
+## API sketch
+
 `GET /catalog` · `GET /connected` · `POST /{provider}/connect` · `DELETE /{provider}` ·
 `POST /{provider}/oauth/callback` · `GET/POST /google/drive/**` · `POST /google/gmail/**` ·
 `GET/POST /email/**` · `GET/POST /webdav/**`
-## Притежавани данни
-`connections`, `credentials` (шифровано), `email_log`, `integration_access`.
-## Зависимости
-| Посока | Какво |
-|---|---|
-| Обаден от | услуга за агент (инструменти за имейл/gmail/диск), услуга за знания (IO за синхронизиране на файл), шлюз (UI) |
-| Обаждания | API на Google, IMAP/SMTP сървъри, WebDAV сървъри |
-| работни места | проверки на здравето на връзката |
 
-## Бележки по дизайна
-- Основният договор на адаптера (`connect`, `disconnect`, `read`, `getStatus`, глаголи доставчик)
-  формализира това, което монолитът `integrations/registry.js` започна - но тук *на живо*
-  реализации (които монолитът запази в `core/`) също се движат зад него.
-- Пакетни вертикали (Виртуален офис, енергия — HMAC ръкостискане) порт като още два адаптера
-  **само ако партньорствата все още са активни** ([04 §5](../../04-functional-coverage.md)).
-- Microsoft / generic-ERP мъничетата от монолита **не** са пренесени; записът в каталога
-  се връща, когато съществува истински адаптер.
-## Контролен списък за внедряване
-- [ ] Протокол на адаптер + откриване на папка + валидиране на манифест
-- [ ] Хранилище за пълномощия (AES-256-GCM, план за ротация на ключове)
-- [ ] Google адаптер: OAuth поток, Drive IO, Gmail глаголи
-- [ ] Адаптер за имейл: IMAP/SMTP тест за свързване, входяща кутия/четене/изпращане, журнал за изпращане
-- [ ] WebDAV адаптер: свързване CRUD, разглеждане, стрийминг файл IO
-- [ ] Каталог + жизнен цикъл на инсталиране + режими на администраторски достъп
-- [ ] Задача за проверка на здравето + показване на състоянието
-## Препратки
-- [02 — запис в каталога на услугите](../../02-service-catalog.md#integration-service-8080)
-- [06 §4.2 — модел за откриване на плъгини](../../06-architectural-patterns.md)
-- [07 §5.10 — графика на зависимости](../../07-dependency-graphs.md#510-integration-service)
+## Data owned
+
+`connections`, `credentials` (encrypted), `email_log`, `integration_access`.
+
+## Dependencies
+
+| Direction | What |
+|---|---|
+| Called by | agent-service (email/gmail/drive tools), knowledge-service (sync file IO), gateway (UI) |
+| Calls | Google APIs, IMAP/SMTP servers, WebDAV servers |
+| Jobs | connection health checks |
+
+## Design notes
+
+- The adapter base contract (`connect`, `disconnect`, `read`, `getStatus`, provider verbs)
+  formalizes what the monolith's `integrations/registry.js` started — but here the *live*
+  implementations (which the monolith kept in `core/`) move behind it too.
+- Bundled verticals (Virtual Office, Energy — HMAC handshake) port as two more adapters
+  **only if the partnerships are still live** ([04 §5](../../04-functional-coverage.md)).
+- Microsoft / generic-ERP stubs from the monolith are **not** ported; the catalog entry
+  returns when a real adapter exists.
+
+## Implementation checklist
+
+- [ ] Adapter protocol + folder discovery + manifest validation
+- [ ] Credentials vault (AES-256-GCM, key rotation plan)
+- [ ] Google adapter: OAuth flow, Drive IO, Gmail verbs
+- [ ] Email adapter: IMAP/SMTP connect-test, inbox/read/send, send log
+- [ ] WebDAV adapter: connection CRUD, browse, streaming file IO
+- [ ] Catalog + install lifecycle + admin access modes
+- [ ] Health-check job + status surfacing
+
+## References
+
+- [02 — service catalog entry](../../02-service-catalog.md#integration-service-8080)
+- [06 §4.2 — plugin discovery pattern](../../06-architectural-patterns.md)
+- [07 §5.10 — dependency graph](../../07-dependency-graphs.md#510-integration-service)

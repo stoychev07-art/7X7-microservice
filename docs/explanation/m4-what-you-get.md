@@ -48,8 +48,11 @@ These three services don't add product features — they make the product **sust
   bypassed.
 - **integration-service is the universal adapter socket.** One uniform contract
   (connect/disconnect/read/verbs) with **folder-discovered adapters** (same plugin pattern as
-  agents): Google (Drive/Gmail), email (IMAP/SMTP), WebDAV. It holds all external credentials in
-  an encrypted vault — no other service does.
+  agents): Google (Drive/Gmail), email (IMAP/SMTP), WebDAV. It owns all external connectivity —
+  no other service does. Credentials split by type: **OAuth tokens are held by self-hosted
+  [Nango](../services/external/nango/README.md)** (the OAuth/token backend, behind a port; we
+  keep a `nango_connection_id`), while non-OAuth secrets (IMAP/SMTP, WebDAV) sit in the local
+  AES-256-GCM vault.
 - **platform-service is the front desk + black box recorder.** In-app notifications, the *only*
   place that holds email (Brevo) credentials, support tickets, the central audit sink, and
   platform settings. Four small modules in one service because each is tiny and event-driven.
@@ -61,7 +64,8 @@ flowchart TB
     bill -->|"checkout / webhook"| stripe["Stripe"]
     agent["agent-service"] -->|"email / gmail / drive tools"| intg["integration-service"]
     kn["knowledge-service"] -->|"WebDAV/Drive file IO"| intg
-    intg -->|"vault (AES-GCM)"| intgdb[("integration DB")]
+    intg -->|"OAuth tokens + refresh"| nango["Nango"]
+    intg -->|"local vault (AES-GCM, non-OAuth)"| intgdb[("integration DB")]
     any["any service"] -. "notification.requested / audit.event" .-> plat["platform-service"]
     biz["business-service (M6)"] -. "invoice.issued / stock.low" .-> plat
     plat -->|"email"| brevo["Brevo"]
@@ -114,11 +118,13 @@ test suite against a Stripe mock.
 
 ### 4.3 The agent reaches the outside world
 
-The agent's email/Gmail/Drive tools (added here) call integration-service, which pulls the
-tenant's encrypted credentials from its vault and talks to the real provider. Sending an email
-is a `write` tool — so it still goes through the approval card. Separately, knowledge-service's
-WebDAV/Drive **sync engines** (stubbed in M2) now use integration-service for file IO, so folder
-contents flow into the searchable knowledge base.
+The agent's email/Gmail/Drive tools (added here) call integration-service, which talks to the
+real provider on the user's behalf. For Google (OAuth) it goes through **Nango's proxy** by
+`connection_id` — Nango injects and refreshes the token, so no credential ever enters our
+process or the agent's context; for IMAP/SMTP/WebDAV it uses the local encrypted vault. Sending
+an email is a `write` tool — so it still goes through the approval card. Separately,
+knowledge-service's WebDAV/Drive **sync engines** (stubbed in M2) now use integration-service
+for file IO, so folder contents flow into the searchable knowledge base.
 
 ### 4.4 One way to notify, one place to audit
 
@@ -132,7 +138,8 @@ platform-service collects them into one queryable trail.
 ## 5. The ideas worth internalizing
 
 - **Centralize credentials, centralize trust.** Just as only model-gateway holds LLM keys, only
-  integration-service holds external-system credentials and only platform-service holds email
+  integration-service owns external-system connectivity (OAuth tokens delegated to self-hosted
+  Nango; non-OAuth secrets in its local vault) and only platform-service holds email
   creds. Fewer places to leak, one place to rotate.
 - **Events decouple producers from consumers.** billing didn't exist when model-gateway started
   emitting `token.usage`; it just attached as a consumer. New consumers attach without touching

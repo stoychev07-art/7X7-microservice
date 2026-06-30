@@ -1,34 +1,69 @@
-# таксуване-услуга
-> Икономиката на токените и плащанията: измерване, баланси, проверка на Stripe, автоматично допълване.
-**Състояние:** 📋 планирано · **Порт (dev):** 8070 · **База данни:**`billing`
+# billing-service
 
-## Отговорности
-- Токен баланси на наемател/потребител; **измерване** чрез консумация`token.usage`събития отмодел-шлюз (с приписване на функция/агент).- Конфигурация за ценообразуване на токени; книга за използване + сборни сборове; администраторски изглед на използване на живо (SSE).- Лимити + сигнали (нисък баланс, дневен бюджет) →`notification.requested`събития.- Пакети с токени; **Ивица** Каса; обработка на webhook (проверено с подпис, идемпотентенчрез съхранени идентификатори на събития); запазени карти; **автоматично допълване** при нисък баланс.- Бонус за токен за добре дошли`tenant.created`; поток на искане за увеличаване на ограничение (собственик → администратор).
-## API скица
-`GET /balance` · `GET /usage`(+ администраторски SSE поток) ·`GET /packages` · `POST /checkout` ·
+> The token economy and payments: metering, balances, Stripe checkout, auto-top-up.
+
+**Status:** 📋 planned · **Port (dev):** 8070 · **Database:** `billing`
+
+## Responsibilities
+
+- Token balances per tenant/user; **metering** by consuming `token.usage` events from
+  model-gateway (with feature/agent attribution).
+- Token pricing config; usage ledger + aggregation rollups; admin live usage view (SSE).
+- Limits + alerts (low balance, daily budget) → `notification.requested` events.
+- Token packages; **Stripe** Checkout; webhook handling (signature-verified, idempotent
+  via stored event IDs); saved cards; **auto-top-up** at low balance.
+- Welcome token bonus on `tenant.created`; limit-increase request flow (owner → admin).
+
+## API sketch
+
+`GET /balance` · `GET /usage` (+ admin SSE stream) · `GET /packages` · `POST /checkout` ·
 `POST /webhooks/stripe` · `GET/POST /auto-topup` · `POST /limit-requests`
 
-## Притежавани данни
+## Data owned
+
 `balances`, `usage_ledger`, `token_pricing`, `packages`, `purchases`, `stripe_events`,
 `auto_topup_settings`, `auto_topup_log`, `limit_requests`, `bonus_settings`.
 
-## Зависимости
-| Посока | Какво |
+## Dependencies
+
+| Direction | What |
 |---|---|
-| Обаден от | агент-услуга (проверка на баланса преди полет), платформа-услуга, шлюз (UI) |
-| Обаждания | Stripe API |
-| Събития в | `token.usage`(измерване),`tenant.created`(бонус за добре дошли) |
-| Събития извън | `notification.requested`(сигнали),`audit.event` |
-| работни места | проверка за автоматично допълване, сборни данни за използване |
+| Called by | agent-service (pre-flight balance check), platform-service, gateway (UI) |
+| Calls | Stripe API |
+| Events in | `token.usage` (metering), `tenant.created` (welcome bonus) |
+| Events out | `notification.requested` (alerts), `audit.event` |
+| Jobs | auto-top-up check, usage rollups |
 
-## Бележки по дизайна
-- Платежният модул на монолита имаше **нулеви директни тестове** (`CODE_QUALITY_REPORT.md`) —
-това пренаписване третира Stripe потоците като код с най-висок риск в платформата: идемпотентенобработка на webhook, съхранена`stripe_events`dedupe и пълен тестов пакет срещуstripe-mock не подлежат на обсъждане.- Отчитането на потреблението трябва да е идемпотентно (поне веднъж доставка) - записите в главната книга са въведенипо идентификатор на събитие.- **Проверките на баланса преди полет са препоръчителни.** Измерването пристига чрез събития, така че има балансчетенето може да забави най-новите LLM повиквания чрез латентност на автобуса за събития - потребител близо до нула може за краткопреразход с няколко оборота. Приема се: овърдрафтът е ограничен от забавяне на потребителя исе установява веднага след като`token.usage`потребителят наваксва.- **Не е пренесено**: таксуване, базирано на наследен план, регистър на пазарните комисионни  ([04 §4](../../04-functional-coverage.md)).
-- Бележка за миграция: Stripe данните се движат **последно** (Фаза 4) по  [05 §5](../../05-migration-pros-and-cons.md).
+## Design notes
 
-## Контролен списък за внедряване
-- [ ] Схема + модел на счетоводна книга (само за добавяне, ключ за идентификатор на събитие)- [ ] `token.usage`потребител с идемпотентност- [ ] Показания на баланса + лимити + прагове за предупреждение- [] Stripe checkout + webhook (проверка на подписа, дедупиране на събитие) + запазени карти- [ ] Задача за автоматично допълване + дневник- [ ] Добре дошли бонус потребител; поток на лимит-заявка- [ ] SSE поток за използване на администратор- [ ] Пълен набор от тестове на Stripe (макет на ивици / тестови часовници)
-## Препратки
-- [02 — запис в каталога на услугите](../../02-service-catalog.md#billing-service-8070)
-- [06 §5.4 — защо измерването живее в събития на шлюза на модела](../../06-architectural-patterns.md)
-- [07 §5.9 — графика на зависимостта](../../07-dependency-graphs.md#59-billing-service)
+- The monolith's payments module had **zero direct tests** (`CODE_QUALITY_REPORT.md`) —
+  this rewrite treats Stripe flows as the highest-risk code in the platform: idempotent
+  webhook processing, stored `stripe_events` dedupe, and a full test suite against
+  stripe-mock are non-negotiable.
+- Metering consumption must be idempotent (at-least-once delivery) — ledger entries keyed
+  by event ID.
+- **Pre-flight balance checks are advisory.** Metering arrives via events, so a balance
+  read can lag the latest LLM calls by event-bus latency — a user near zero can briefly
+  overspend by a few turns. Accepted: the overdraft is bounded by consumer lag and
+  settles as soon as the `token.usage` consumer catches up.
+- **Not carried over**: legacy plan-based billing, marketplace commission ledger
+  ([04 §4](../../04-functional-coverage.md)).
+- Migration note: Stripe data moves **last** (Phase 4) per
+  [05 §5](../../05-migration-pros-and-cons.md).
+
+## Implementation checklist
+
+- [ ] Schema + ledger model (append-only, event-ID keyed)
+- [ ] `token.usage` consumer with idempotency
+- [ ] Balance reads + limits + alert thresholds
+- [ ] Stripe checkout + webhook (signature verify, event dedupe) + saved cards
+- [ ] Auto-top-up job + log
+- [ ] Welcome bonus consumer; limit-request flow
+- [ ] Admin usage SSE stream
+- [ ] Full Stripe test suite (stripe-mock / test clocks)
+
+## References
+
+- [02 — service catalog entry](../../02-service-catalog.md#billing-service-8070)
+- [06 §5.4 — why metering lives in model-gateway events](../../06-architectural-patterns.md)
+- [07 §5.9 — dependency graph](../../07-dependency-graphs.md#59-billing-service)

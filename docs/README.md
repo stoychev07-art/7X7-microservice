@@ -20,8 +20,11 @@ as dead or redundant.
 | 6 | [06-architectural-patterns.md](./06-architectural-patterns.md) | Reference: every architectural pattern used (gateway, hexagonal, events, strangler, ReAct, …) — what it is, why it's here, what it costs |
 | 7 | [07-dependency-graphs.md](./07-dependency-graphs.md) | Every dependency, drawn: whole-system graphs (full, sync HTTP, events, infrastructure) + one graph per service with internal structure and external dependencies |
 | 8 | [08-database-architecture.md](./08-database-architecture.md) | Where does data live? Database-per-service catalog, per-DB schemas (ERDs), and how databases reference each other without cross-DB joins |
-| 9 | [services/](./services/README.md) | Per-service starting points — one folder per service with responsibilities, API sketch, dependencies, and an implementation checklist |
-| 10 | [libs/common/](./libs/common/README.md) | The `x7-common` shared kernel — config, auth plumbing, pooled HTTP, event bus, observability, cross-service DTOs |
+| 9 | [09-industry4z-platform-integration.md](./09-industry4z-platform-integration.md) | How do the Industry4Z stack's technologies (LiteLLM, Qdrant, Authentik, Nango, n8n, TimescaleDB, …) map onto this architecture — and what must change to adopt them? |
+| 10 | [10-phase1-co-deployment.md](./10-phase1-co-deployment.md) | The 13 logical services are too many *processes* for day one — which ones share a deployable in phase 1, what stays split, and what triggers each later split |
+| 11 | [11-deployment.md](./11-deployment.md) | The operational *how*: the single image, the `SERVICES` wiring, config/secrets, data-plane init, migrations, networking, health/observability, dev + prod topology, scaling, splitting a service out, backups, CI/CD |
+| 12 | [services/](./services/README.md) | Per-service starting points — one folder per service with responsibilities, API sketch, dependencies, and an implementation checklist |
+| 13 | [libs/common/](./libs/common/README.md) | The `x7-common` shared kernel — config, auth plumbing, pooled HTTP, event bus, observability, cross-service DTOs |
 
 ## One-paragraph summary
 
@@ -30,8 +33,9 @@ All traffic — web, future mobile, future chat bots — enters through a single
 own database (database-per-service, no shared tables). The **Agent Service** hosts LangGraph
 graphs discovered from per-agent folders (`manifest.yaml` + `graph.py`): adding an agent or a
 tool never requires editing core runtime code. LLM calls from every service go through a
-**Model Gateway** that abstracts providers (Anthropic, OpenAI, …) and emits token-usage
-events consumed by the **Billing Service**. The frontend is a Next.js app that talks only to
+**Model Gateway** — a thin owner backed by **LiteLLM** that abstracts providers (cloud
+Anthropic/Claude, local Ollama, …) and emits token-usage events consumed by the
+**Billing Service**. The frontend is a Next.js app that talks only to
 the gateway; chat-channel adapters (Telegram, Viber) are thin clients of the same gateway API.
 
 ## Conventions used in these docs

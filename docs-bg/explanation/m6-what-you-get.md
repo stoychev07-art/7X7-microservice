@@ -1,55 +1,52 @@
-# Какво получавате след етап 6 — истински ERP (business-service)
+# What you get after Milestone 6 — real ERP (business-service)
 
-> Обяснение на ясен език към milestone картата
-> (`.cursor/plans/7x7_greenfield_build_e8060d34.plan.md`). Етап 6 е **post-parity и
-> net-new**: **business-service** добавя typed invoicing, inventory и spendings — entities,
-> чиято коректност е *legal/financial*, така че правилата им трябва да се налагат от code, не
-> от гъвкавия registry engine.
-
----
-
-## 1. Резултатът в едно изречение
-
-След етап 6 платформата е **истински ERP**: издава legally-numbered invoices с правилен VAT и
-immutability, следи stock като auditable ledger, който не може да стане отрицателен, и записва
-expenses с budgets и cash-flow — а agent може да управлява всичко това през обичайния
-approve-before-write flow.
-
-Всичко преди това достигна feature-parity със старата система (минус умишлено премахнатите
-части). M6 отива *отвъд* това: capabilities, които monolith никога не е имал.
+> Plain-language companion to the milestone map
+> (`.cursor/plans/7x7_greenfield_build_e8060d34.plan.md`). Milestone 6 is **post-parity and
+> net-new**: the **business-service** adds typed invoicing, inventory, and spendings — the
+> entities whose correctness is *legal/financial*, so their rules must be enforced by code, not
+> by the flexible registry engine.
 
 ---
+## 1. The one-sentence outcome
 
-## 2. Какво съществува, когато приключите (конкретно)
+After Milestone 6 the platform is a **real ERP**: it issues legally-numbered invoices with
+correct VAT and immutability, tracks stock as an auditable ledger that can't go negative, and
+records expenses with budgets and cash-flow — and the agent can drive all of it through the
+usual approve-before-write flow.
 
-| Можете да… | Благодарение на… |
+Everything before this reached feature-parity with the old system (minus deliberately dropped
+parts). M6 goes *beyond* it: capabilities the monolith never had.
+
+---
+## 2. What exists when you're done (concretely)
+
+| You can… | Because of… |
 |---|---|
-| Издавате sales/purchase invoices със законови номера без пропуски | **business-service** invoice sequences |
-| Получавате правилен VAT, credit/debit notes и immutable issued invoices | invoice lifecycle + VAT math + immutability |
-| Следите stock като receipts/issues/transfers/adjustments | append-only `stock_movements` ledger |
-| Вярвате, че stock никога не става отрицателен и levels са derived | materialized `stock_levels` + non-negativity rule |
-| Записвате expenses, recurring costs, budgets, cash-flow | spendings module + cashflow report |
-| Накарате agent да create-ва invoices / move-ва stock / add-ва expenses | tools `invoice_create`, `stock_move`, `expense_add`, … (write → approval) |
-| Получавате notification, когато invoice е issued или stock е low | `invoice.issued` / `stock.low` events → platform-service |
-| Render-вате invoice PDF | document-service render |
+| Issue sales/purchase invoices with gap-free legal numbers | **business-service** invoice sequences |
+| Get correct VAT, credit/debit notes, and immutable issued invoices | invoice lifecycle + VAT math + immutability |
+| Track stock as receipts/issues/transfers/adjustments | append-only `stock_movements` ledger |
+| Trust that stock never goes negative and levels are derived | materialized `stock_levels` + non-negativity rule |
+| Record expenses, recurring costs, budgets, cash-flow | spendings module + cashflow report |
+| Have the agent create invoices / move stock / add expenses | tools `invoice_create`, `stock_move`, `expense_add`, … (write → approval) |
+| Get notified when an invoice is issued or stock runs low | `invoice.issued` / `stock.low` events → platform-service |
+| Render an invoice PDF | document-service render |
 
-Counterparties все още живеят в registry-service (flexible); business-service съхранява само
-техния ID плюс **frozen snapshot** върху issued invoices, така че legal document никога да не се
-променя, когато counterparty record бъде редактиран по-късно.
+Counterparties still live in registry-service (flexible); business-service stores only their ID
+plus a **frozen snapshot** on issued invoices, so a legal document never changes when the
+counterparty record is later edited.
 
 ---
+## 3. The mental model: the room where mistakes are illegal, not just messy
 
-## 3. Мисловният модел: стаята, където грешките са незаконни, не просто разхвърляни
+This is the other side of the boundary you met in M3:
 
-Това е другата страна на границата, която видяхте в M3:
-
-> **registry-service** = flexible, tenant-defined data; грешна стойност е *разхвърляна*.
-> **business-service** = fixed, typed schemas with hard invariants; грешна стойност е *illegal or
-> financially wrong* (пропуск в invoice numbers, грешен VAT, negative stock, редактиран issued
+> **registry-service** = flexible, tenant-defined data; a wrong value is *messy*.
+> **business-service** = fixed, typed schemas with hard invariants; a wrong value is *illegal or
+> financially wrong* (a gap in invoice numbers, bad VAT, negative stock, an edited issued
 > invoice).
 
-Така deal pipeline „Работен регистър“ остава registry, но invoice, който произвежда, е typed
-entity тук, referenced от registry row чрез ID.
+So the "Работен регистър" deal pipeline stays a registry, but the invoice it produces is a
+typed entity here, referenced from the registry row by ID.
 
 ```mermaid
 flowchart TB
@@ -68,14 +65,12 @@ flowchart TB
 ```
 
 ---
+## 4. How it works
 
-## 4. Как работи
+### 4.1 Gap-free legal invoice numbering
 
-### 4.1 Законова номерация на invoices без пропуски
-
-Българското законодателство изисква invoice numbers без пропуски и без duplicates, дори при
-concurrent issuing. business-service използва dedicated per-tenant sequence row, заключен при
-allocation:
+Bulgarian law requires invoice numbers with no gaps and no duplicates, even under concurrent
+issuing. business-service uses a dedicated per-tenant sequence row locked during allocation:
 
 ```mermaid
 sequenceDiagram
@@ -91,80 +86,76 @@ sequenceDiagram
     B-->>plat: invoice.issued event
 ```
 
-След issue invoice е **immutable** — corrections се правят само чрез credit/debit notes, никога
-чрез edit. Това е разликата между flexible row и legal document.
+After issue, the invoice is **immutable** — corrections happen only via credit/debit notes,
+never by editing. That's the difference between a flexible row and a legal document.
 
-### 4.2 Stock като append-only ledger
+### 4.2 Stock as an append-only ledger
 
-Никога не edit-вате stock level директно. Вместо това записвате **movements** (receipt, issue,
-transfer, adjustment), а level е *derived* от ledger — като bank account, който е сумата на
-transactions. Non-negativity rule отхвърля всяко movement, което би свалило stock под нула, а
-преминаване под minimum threshold emit-ва `stock.low`. Това прави inventory auditable и
-невъзможен за тиха корупция.
+You never edit a stock level directly. Instead you record **movements** (receipt, issue,
+transfer, adjustment), and the level is *derived* from the ledger — like a bank account that's
+the sum of its transactions. A non-negativity rule rejects any movement that would push stock
+below zero, and crossing a minimum threshold emits `stock.low`. This makes inventory auditable
+and impossible to silently corrupt.
 
-### 4.3 Agent writes са exactly-once
+### 4.3 Agent writes are exactly-once
 
-Създаването на invoice от chat минава през същата approval card като всеки write — но тук
-коректността е още по-важна. Всеки одобрен write носи idempotency key (derived from approval), а
-business-service dedupe-ва по него: ако системата retry-не след crash, invoice **не** се номерира
-два пъти. Duplicate legal invoice е скъп за поправяне, затова тази гаранция е non-negotiable.
+Creating an invoice from chat goes through the same approval card as any write — but here
+correctness matters even more. Each approved write carries an idempotency key (derived from the
+approval), and business-service dedupes on it: if the system retries after a crash, the invoice
+is **not** numbered twice. A duplicate legal invoice is expensive to undo, so this guarantee is
+non-negotiable.
 
 ---
-
-## 5. Идеите, които си струва да усвоите
+## 5. The ideas worth internalizing
 
 - **Invariants belong in code.** Sequential numbering, VAT math, immutability, non-negative
-  stock — тези неща не могат да останат на generic table engine; налагат се тук, в types и
+  stock — these can't be left to a generic table engine; they're enforced here, in types and
   constraints.
 - **The boundary rule, made real.** Flexible/messy → registry; illegal/financially-wrong →
-  business-service. Същите canonical-role columns, които registries използват, правят
-  graduated-ването на rows от „Фактури“ към typed invoices механично.
-- **Denormalized snapshots freeze legal facts.** Issued invoice копира counterparty details в
-  момента на issue, така че по-късни edits на CRM record не могат да променят history.
-- **Exactly-once via idempotency keys.** Append-only ledgers + idempotent writes означават, че
-  retries са безопасни дори за пари и legal documents.
-- **Still database-per-service.** business-service чете counterparties от registry-service и
-  prices от document-service през HTTP — никога чрез join към техните tables.
+  business-service. The same canonical-role columns that registries use make graduating
+  "Фактури" rows into typed invoices mechanical.
+- **Denormalized snapshots freeze legal facts.** An issued invoice copies the counterparty
+  details at issue time, so later edits to the CRM record can't alter history.
+- **Exactly-once via idempotency keys.** Append-only ledgers + idempotent writes mean retries
+  are safe even for money and legal documents.
+- **Still database-per-service.** business-service reads counterparties from registry-service and
+  prices from document-service over HTTP — never by joining their tables.
 
 ---
+## 6. Why this milestone comes last
 
-## 6. Защо този етап идва последен
-
-Той нарочно се изгражда **само след като parity е доказан**. Докато останалата част от
-платформата не съвпадне с поведението на старата система, добавянето на net-new ERP domains би
-рискувало да destabilize-не migration. Когато parity е стабилен, business-service превръща
-flexible registry „Фактури“ в реален invoicing domain — добавъчно, не rewrite — и се закача към
-events (`invoice.issued`, `stock.low`), чиито consumer (platform-service) вече съществува от M4.
-
----
-
-## 7. Как ще разберете, че работи (exit test)
-
-1. Създайте и issue-нете няколко invoices concurrently → numbers са sequential, без gaps или
-   duplicates; issued invoices отхвърлят edits; credit note adjusts correctly; VAT е правилен.
-2. Запишете stock movements → levels се derive-ват правилно; over-issue се отхвърля; пресичане
-   на min threshold emit-ва `stock.low` и пристига notification.
-3. Добавете expenses (включително recurring one) → cash-flow report ги отразява.
-4. От chat помолете agent да create-не invoice → approve → issue-ва се веднъж; replay-нете
-   operation → няма duplicate.
-5. Потвърдете, че counterparty snapshot на issued invoice не се променя, когато edit-нете CRM row.
+It's deliberately built **only after parity is proven**. Until the rest of the platform matches
+the old system's behavior, adding net-new ERP domains would risk destabilizing the migration.
+Once parity is solid, business-service graduates the flexible "Фактури" registry into a real
+invoicing domain — additive, not a rewrite — and slots onto events (`invoice.issued`,
+`stock.low`) whose consumer (platform-service) already exists from M4.
 
 ---
+## 7. How you'll know it works (the exit test)
 
-## 8. Какво това НЕ Е (за да са правилни очакванията)
-
-- **Не е заместител на registries.** Flexible, tenant-defined trackers остават в
-  registry-service; business-service притежава само строгите financial/legal entities.
-- **Не е нов pricing owner.** Prices/margins остават в document-service; business-service ги
-  чете, за да build-ва invoice lines.
-- **Не е краят на boundary discipline.** Новите features все още минават през същия тест:
-  messy → registry, illegal/financially-wrong → business-service.
+1. Create and issue several invoices concurrently → numbers are sequential with no gaps or
+   duplicates; issued invoices reject edits; a credit note adjusts correctly; VAT is right.
+2. Record stock movements → levels derive correctly; an over-issue is rejected; crossing the min
+   threshold emits `stock.low` and a notification arrives.
+3. Add expenses (including a recurring one) → the cash-flow report reflects them.
+4. From chat, ask the agent to create an invoice → approve → it's issued once; replay the
+   operation → no duplicate.
+5. Confirm an issued invoice's counterparty snapshot doesn't change when you edit the CRM row.
 
 ---
+## 8. What this is NOT (so expectations are right)
 
-## Вижте също
-- `docs/explanation/m3-what-you-get.md` — registry страната на границата.
+- **Not a replacement for registries.** Flexible, tenant-defined trackers stay in
+  registry-service; business-service only owns the strict financial/legal entities.
+- **Not a new pricing owner.** Prices/margins remain in document-service; business-service reads
+  them to build invoice lines.
+- **Not the end of the boundary discipline.** New features still get the same test: messy →
+  registry, illegal/financially-wrong → business-service.
+
+---
+## See also
+- `docs/explanation/m3-what-you-get.md` — the registry side of the boundary.
 - `docs/services/business-service/README.md`.
-- `docs/04-functional-coverage.md` §6 — нови capabilities beyond parity.
-- `docs/02-service-catalog.md` — boundary таблицата registry ↔ business-service.
-- `docs/08-database-architecture.md` §4.10 — схемата `business`.
+- `docs/04-functional-coverage.md` §6 — new capabilities beyond parity.
+- `docs/02-service-catalog.md` — the registry ↔ business-service boundary table.
+- `docs/08-database-architecture.md` §4.10 — the `business` schema.

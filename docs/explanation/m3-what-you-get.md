@@ -28,7 +28,7 @@ structured tables it reads/writes and the document engine it generates from.
 | Get starter registries automatically when a company is created | template install on `tenant.created` |
 | Have agents find a field by *meaning* across differently-named tables | **canonical column roles** (`client_name`, `eik`, …) |
 | Keep a master price list with history and AI-assisted import | **document-service** prices |
-| Generate a branded PDF/Excel/Word from a template + data | document-service render (headless Chromium) |
+| Generate a branded PDF/Excel/Word from a template + data | document-service render (via **Carbone**, one engine for PDF/DOCX/XLSX) |
 | Draft an offer / fill a KSS cost sheet | offer + KSS endpoints + agent tools |
 | Export any registry to XLSX | registry export |
 
@@ -43,9 +43,9 @@ Agent tools added/flipped to real backends here: `registry_query`, `registry_add
   track (columns + types); rows are stored flexibly (JSONB) but with real backend controls:
   permissions, audit history, versioning, export. It's Airtable-like flexibility with
   enterprise guardrails.
-- **document-service turns data into documents.** Visual templates, PDF rendering (isolated in
-  its own service so heavy Chromium rendering never starves anything else), Excel/Word
-  generation, plus the **price list and margins** that feed offers and KSS.
+- **document-service turns data into documents.** Visual templates, PDF rendering (delegated to
+  **Carbone** and isolated in its own service so heavy rendering never starves anything else),
+  Excel/Word generation, plus the **price list and margins** that feed offers and KSS.
 
 The crucial design rule (you'll use it constantly):
 
@@ -106,7 +106,7 @@ sequenceDiagram
     A-->>C: approval_required (generate_document is a write)
     C->>A: resume {approved: true}
     A->>D: generate_document (template + data)
-    D->>D: render HTML → Chromium → PDF → MinIO
+    D->>D: render template + data → Carbone → PDF → MinIO
     D-->>A: signed download URL
     A-->>C: "Here's the offer" + link
 ```

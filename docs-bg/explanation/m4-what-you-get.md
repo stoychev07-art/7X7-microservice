@@ -1,57 +1,55 @@
-# Какво получавате след етап 4 — billing, integrations, platform plumbing
+# What you get after Milestone 4 — billing, integrations, platform plumbing
 
-> Обяснение на ясен език към milestone картата
-> (`.cursor/plans/7x7_greenfield_build_e8060d34.plan.md`). Етап 4 завършва
-> **supporting plane**: **billing-service** (token economy + Stripe), **integration-service**
-> (Google/email/WebDAV connectors) и **platform-service** (notifications, support, audit,
+> Plain-language companion to the milestone map
+> (`.cursor/plans/7x7_greenfield_build_e8060d34.plan.md`). Milestone 4 completes the
+> **supporting plane**: **billing-service** (the token economy + Stripe), **integration-service**
+> (Google/email/WebDAV connectors), and **platform-service** (notifications, support, audit,
 > settings).
 
 ---
+## 1. The one-sentence outcome
 
-## 1. Резултатът в едно изречение
+After Milestone 4 the platform can **charge for itself and reach the outside world**: token
+usage is metered into real balances, customers buy tokens through Stripe, the agent can read/
+send email and browse Drive/WebDAV, and the whole system sends notifications and keeps a
+central audit trail.
 
-След етап 4 платформата може **да таксува себе си и да достига външния свят**: token usage се
-измерва в реални balances, customers купуват tokens през Stripe, agent може да чете/изпраща
-email и да преглежда Drive/WebDAV, а цялата система изпраща notifications и пази централен
-audit trail.
-
-M1–M3 изградиха продукта. M4 го прави управляем като бизнес: пари влизат, външни системи са
-свързани, users са информирани, всичко е auditable.
+M1–M3 built the product. M4 makes it operable as a business: money in, external systems
+connected, users kept informed, everything auditable.
 
 ---
+## 2. What exists when you're done (concretely)
 
-## 2. Какво съществува, когато приключите (конкретно)
-
-| Можете да… | Благодарение на… |
+| You can… | Because of… |
 |---|---|
-| Виждате реален token balance, който намалява, докато AI се използва | **billing-service**, който consume-ва `token.usage` |
-| Купувате token packages с card | Stripe Checkout + idempotent webhook |
-| Получавате auto-top-up и welcome bonus при signup | auto-top-up job + `tenant.created` consumer |
-| Накарате agents да четат/изпращат email, да преглеждат Drive/WebDAV | **integration-service** adapters + agent tools |
-| Синхронизирате WebDAV/Drive folder в knowledge base | knowledge-service sync engines, свързани към integration IO |
-| Получавате in-app (bell) + email notifications | **platform-service** notifications + Brevo |
-| Подавате и отговаряте на support tickets | platform-service support module |
-| Query-вате един централен audit log през всички услуги | platform-service `audit.event` sink |
+| See a real token balance that drops as the AI is used | **billing-service** consuming `token.usage` |
+| Buy token packages with a card | Stripe Checkout + idempotent webhook |
+| Get auto-topped-up and a welcome bonus on signup | auto-top-up job + `tenant.created` consumer |
+| Have agents read/send email, browse Drive/WebDAV | **integration-service** adapters + agent tools |
+| Sync a WebDAV/Drive folder into the knowledge base | knowledge-service sync engines wired to integration IO |
+| Receive in-app (bell) + email notifications | **platform-service** notifications + Brevo |
+| File and answer support tickets | platform-service support module |
+| Query one central audit log across all services | platform-service `audit.event` sink |
 
-Сега metering pipeline, изграден още в M1, най-после има consumer: `token.usage` events, които
-model-gateway emit-ва от самото начало, се сумират в balances.
+Now the metering pipeline built way back in M1 finally has a consumer: the `token.usage` events
+that model-gateway has been emitting all along get tallied into balances.
 
 ---
+## 3. The mental model: the support plane around the product
 
-## 3. Мисловният модел: support plane около продукта
+These three services don't add product features — they make the product **sustainable**:
 
-Тези три услуги не добавят product features — те правят продукта **устойчив**:
-
-- **billing-service е касата и броячът.** Той слуша за usage events и изважда от balances,
-  продава token packages през Stripe и top-up-ва автоматично. Никога не извиква други услуги, за
-  да измерва — само consume-ва events, затова metering не може да бъде заобиколен.
-- **integration-service е универсалният adapter socket.** Един унифициран contract
-  (connect/disconnect/read/verbs) с **folder-discovered adapters** (същият plugin pattern като
-  agents): Google (Drive/Gmail), email (IMAP/SMTP), WebDAV. Той държи всички external
-  credentials в encrypted vault — никоя друга услуга не го прави.
-- **platform-service е рецепцията + black box recorder.** In-app notifications, *единственото*
-  място с email (Brevo) credentials, support tickets, central audit sink и platform settings.
-  Четири малки modules в една услуга, защото всеки е малък и event-driven.
+- **billing-service is the cash register and the meter.** It listens for usage events and
+  subtracts from balances, sells token packages via Stripe, and tops up automatically. It never
+  calls other services to meter — it just consumes events, which is why metering can't be
+  bypassed.
+- **integration-service is the universal adapter socket.** One uniform contract
+  (connect/disconnect/read/verbs) with **folder-discovered adapters** (same plugin pattern as
+  agents): Google (Drive/Gmail), email (IMAP/SMTP), WebDAV. It holds all external credentials in
+  an encrypted vault — no other service does.
+- **platform-service is the front desk + black box recorder.** In-app notifications, the *only*
+  place that holds email (Brevo) credentials, support tickets, the central audit sink, and
+  platform settings. Four small modules in one service because each is tiny and event-driven.
 
 ```mermaid
 flowchart TB
@@ -68,10 +66,9 @@ flowchart TB
 ```
 
 ---
+## 4. How it works
 
-## 4. Как работи
-
-### 4.1 Metering става balance (idempotent ledger)
+### 4.1 Metering becomes a balance (idempotent ledger)
 
 ```mermaid
 sequenceDiagram
@@ -86,12 +83,12 @@ sequenceDiagram
     B->>B: decrement the tenant balance
 ```
 
-Ledger е **append-only и keyed by event's unique ID**, така че дори event да бъде доставен два
-пъти, ви таксуват веднъж. Balance reads са *advisory* — могат да изостават от последните calls с
-event-bus latency, така че user близо до нула може да overspend-не с turn или два; overdraft е
-bounded и се изравнява, когато consumer навакса. (Това е умишлен trade-off за speed.)
+The ledger is **append-only and keyed by the event's unique ID**, so even if an event is
+delivered twice, you're charged once. Balance reads are *advisory* — they can lag the latest
+calls by event-bus latency, so a user near zero might overspend by a turn or two; that overdraft
+is bounded and settles as the consumer catches up. (This is a deliberate trade-off for speed.)
 
-### 4.2 Плащане със Stripe (безопасно)
+### 4.2 Paying with Stripe (safely)
 
 ```mermaid
 sequenceDiagram
@@ -107,84 +104,79 @@ sequenceDiagram
     B->>B: credit tokens to the balance
 ```
 
-Stripe webhooks се проверяват със signature и се deduplicate-ват по съхранения Stripe event ID
-— payments code (нетестван в старата система) се третира като код с най-висок риск и получава
-пълен test suite срещу Stripe mock.
+Stripe webhooks are signature-verified and deduplicated on the stored Stripe event ID — the
+payments code (untested in the old system) is treated as the highest-risk code and gets a full
+test suite against a Stripe mock.
 
-### 4.3 Agent достига външния свят
+### 4.3 The agent reaches the outside world
 
-Email/Gmail/Drive tools на agent (добавени тук) извикват integration-service, който взема
-encrypted credentials на tenant от vault и говори с реалния provider. Изпращането на email е
-`write` tool — затова пак минава през approval card. Отделно WebDAV/Drive **sync engines** на
-knowledge-service (stubbed в M2) вече използват integration-service за file IO, така че folder
-contents влизат в търсимия knowledge base.
+The agent's email/Gmail/Drive tools (added here) call integration-service, which pulls the
+tenant's encrypted credentials from its vault and talks to the real provider. Sending an email
+is a `write` tool — so it still goes through the approval card. Separately, knowledge-service's
+WebDAV/Drive **sync engines** (stubbed in M2) now use integration-service for file IO, so folder
+contents flow into the searchable knowledge base.
 
-### 4.4 Един начин за notification, едно място за audit
+### 4.4 One way to notify, one place to audit
 
-Всяка услуга, която иска да изпрати email на user, просто публикува
-`notification.requested` event; platform-service е единственото нещо, което държи email
-credentials и прави реалното изпращане (с retry/backoff), плюс in-app bell entry. По същия начин
-всяка услуга публикува `audit.event`, а platform-service ги събира в един queryable trail.
+Every service that wants to email a user just publishes a `notification.requested` event;
+platform-service is the only thing holding email credentials and does the actual send (with
+retry/backoff) plus an in-app bell entry. Likewise, every service publishes `audit.event` and
+platform-service collects them into one queryable trail.
 
 ---
+## 5. The ideas worth internalizing
 
-## 5. Идеите, които си струва да усвоите
-
-- **Centralize credentials, centralize trust.** Както само model-gateway държи LLM keys, само
-  integration-service държи external-system credentials и само platform-service държи email
-  creds. По-малко места за leak, едно място за rotate.
-- **Events decouple producers from consumers.** billing не съществуваше, когато model-gateway
-  започна да emit-ва `token.usage`; той просто се закачи като consumer. Нови consumers се
-  закачат, без да се пипат producers.
+- **Centralize credentials, centralize trust.** Just as only model-gateway holds LLM keys, only
+  integration-service holds external-system credentials and only platform-service holds email
+  creds. Fewer places to leak, one place to rotate.
+- **Events decouple producers from consumers.** billing didn't exist when model-gateway started
+  emitting `token.usage`; it just attached as a consumer. New consumers attach without touching
+  producers.
 - **Idempotency everywhere money or delivery is involved.** Usage ledger keyed by event ID,
-  Stripe webhooks keyed by Stripe event ID, notifications keyed by dedupe key — at-least-once
-  delivery е безопасна, защото всеки consumer dedupe-ва.
-- **Adapters are plugins.** Добавянето на нова integration (или LLM provider) е folder +
-  manifest + adapter class — open/closed principle в operational вид.
-- **Pre-flight checks are advisory, not gates.** Agent поглежда balance преди turn, но реалното
-  accounting е eventual; системата предпочита ниска latency с bounded overdraft.
+  Stripe webhooks keyed by Stripe event ID, notifications keyed by a dedupe key — at-least-once
+  delivery is safe because every consumer dedupes.
+- **Adapters are plugins.** Adding a new integration (or LLM provider) is a folder + manifest +
+  adapter class — the open/closed principle made operational.
+- **Pre-flight checks are advisory, not gates.** The agent peeks at the balance before a turn,
+  but true accounting is eventual; the system favors low latency with a bounded overdraft.
 
 ---
+## 6. Why this milestone comes here
 
-## 6. Защо този етап идва тук
-
-Продуктът (M2–M3) трябва да съществува, преди да си струва да се таксува, интегрира или
-известява за него. M4 умишлено групира трите „supporting“ услуги заедно, защото нито една не е
-по най-горещия product path и всички са предимно event consumers — те се закачат към events,
-които по-ранните етапи вече emit-ват (`token.usage`, `tenant.created`), и към новите
-(`invoice.issued`, `stock.low`), които M6 ще добави.
+The product (M2–M3) has to exist before it's worth billing for, integrating, or notifying about.
+M4 deliberately bundles the three "supporting" services together because none is on the hottest
+product path and all are mostly event consumers — they slot onto the events the earlier
+milestones already emit (`token.usage`, `tenant.created`) and the new ones (`invoice.issued`,
+`stock.low`) that M6 will add.
 
 ---
+## 7. How you'll know it works (the exit test)
 
-## 7. Как ще разберете, че работи (exit test)
-
-1. Пуснете няколко AI chats → вижте как token balance намалява и как matching rows се появяват
-   в usage ledger; replay-нете event и потвърдете, че няма double charge.
-2. Купете token package през Stripe (test mode) → balance се увеличава след webhook; replay-нете
-   webhook → няма double credit.
-3. Свържете email account → помолете agent да изпрати email → approve → изпраща го и се появява
-   send log entry.
-4. Свържете WebDAV/Drive folder → пуснете sync → файловете му стават searchable в knowledge
+1. Run several AI chats → watch the token balance drop and matching rows appear in the usage
+   ledger; replay an event and confirm no double charge.
+2. Buy a token package through Stripe (test mode) → balance increases after the webhook; replay
+   the webhook → no double credit.
+3. Connect an email account → ask the agent to send an email → approve → it sends, and a send
+   log entry appears.
+4. Connect a WebDAV/Drive folder → run a sync → its files become searchable in the knowledge
    base.
-5. Trigger-нете low-balance alert → излизат bell notification + email; проверете, че central
-   audit log показва activity.
+5. Trigger a low-balance alert → a bell notification + email go out; check the central audit log
+   shows the activity.
 
 ---
+## 8. What this is NOT (so expectations are right)
 
-## 8. Какво това НЕ Е (за да са правилни очакванията)
-
-- **Още няма typed invoicing/inventory/expenses.** business-service е **Milestone 6**;
-  `invoice.issued`/`stock.low` consumers в platform-service са свързани и чакат.
-- **Още няма UI.** Billing screens, integrations page, bell и support живеят в **Milestone 5**;
-  тук е API/agent/events.
-- **Не е god-service.** platform-service умишлено *не* притежава всички admin endpoints — всяка
-  domain service пази собствените си admin routes (tokens admin в billing, providers в
-  model-gateway и т.н.).
+- **No typed invoicing/inventory/expenses yet.** business-service is **Milestone 6**; the
+  `invoice.issued`/`stock.low` consumers in platform-service are wired and waiting.
+- **No UI yet.** Billing screens, the integrations page, the bell, and support live in
+  **Milestone 5**; here it's API/agent/events.
+- **Not a god-service.** platform-service deliberately does *not* own all admin endpoints — each
+  domain service keeps its own admin routes (tokens admin in billing, providers in
+  model-gateway, etc.).
 
 ---
-
-## Вижте също
+## See also
 - `docs/explanation/m2-what-you-get.md`, `docs/explanation/m3-what-you-get.md`.
 - `docs/services/billing-service/README.md`, `.../integration-service/README.md`, `.../platform-service/README.md`.
-- `docs/01-architecture-overview.md` §7 — events table и fan-out diagram.
+- `docs/01-architecture-overview.md` §7 — the events table and fan-out diagram.
 - `docs/06-architectural-patterns.md` §3.2 (events/outbox), §4.2 (plugin adapters).

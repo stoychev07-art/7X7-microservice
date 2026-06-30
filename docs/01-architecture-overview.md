@@ -29,7 +29,10 @@ Telegram/Viber bots later — all through one gateway, none with privileged acce
    `Protocol`s); concrete adapters (httpx clients, DB drivers, SDKs) are the only place a
    framework or driver is imported, injected at the edge via FastAPI dependencies.
 5. **LLM access only through the Model Gateway.** No service holds provider API keys except
-   the Model Gateway. This centralizes provider switching, retries, and token metering.
+   the Model Gateway. It is a **thin owner backed by LiteLLM**: LiteLLM supplies multi-provider
+   routing/fallback/budgets across cloud (Anthropic/Claude) and local (Ollama) models, while
+   model-gateway centralizes the internal contract, tenant-attributed token metering (billing
+   truth), and the per-tenant kill switch (see [09 §3.2](./09-industry4z-platform-integration.md#32-llm-access--litellm-vs-model-gateway-)).
 6. **Async-first.** FastAPI + async SQLAlchemy/asyncpg + httpx everywhere; background work
    via per-service workers (arq on Redis); cross-service notifications via Redis Streams.
 7. **Tenant isolation everywhere.** Every request carries a tenant (company) context;
@@ -57,30 +60,44 @@ flowchart TB
     subgraph core["Core services (internal network)"]
         idn["identity-service<br/>users · companies · JWT"]
         agent["agent-service<br/>LangGraph agents + tools<br/>sessions · messages"]
-        mg["model-gateway<br/>LLM provider abstraction"]
+        mg["model-gateway<br/>LLM provider abstraction<br/>(thin owner → LiteLLM)"]
         kn["knowledge-service<br/>ingestion · embeddings · RAG"]
         reg["registry-service<br/>dynamic registries · CRM"]
         biz["business-service<br/>invoices · inventory · spendings"]
         doc["document-service<br/>templates · PDF/Excel · pricing"]
         bill["billing-service<br/>tokens · Stripe"]
-        intg["integration-service<br/>Google · email · WebDAV"]
+        intg["integration-service<br/>Google (via Nango) · email · WebDAV"]
         plat["platform-service<br/>notifications · support ·<br/>audit · settings"]
+        iot["iot-service<br/>devices · readings · alerts"]
+        mf["manufacturing-service<br/>orders · BOM · routing ·<br/>MRP · capacity · MES"]
     end
 
     subgraph infra["Infrastructure"]
         pg[("PostgreSQL<br/>one DB per service")]
+        ts[("TimescaleDB<br/>iot time-series")]
         rd[("Redis<br/>cache · queues · streams")]
         s3[("Object storage<br/>files · artifacts")]
     end
 
-    llm["LLM Providers<br/>Anthropic · OpenAI"]
-    ext["External systems<br/>Stripe · Google · Brevo · IMAP · WebDAV"]
+    litellm["LiteLLM<br/>provider routing · fallback · budgets"]
+    llm["LLM Providers<br/>Anthropic/Claude · local Ollama · …"]
+    nodered["Node-RED<br/>IoT ingestion edge<br/>(MQTT · Modbus · OPC UA)"]
+    scada["SCADA / Node-RED edge<br/>(machine data · MES displays)"]
+    ext["External systems<br/>Stripe · Nango → Google · Brevo · IMAP · WebDAV"]
 
     clients --> gw
     gw --> core
-    agent --> mg & kn & reg & biz & doc & bill & intg
-    mg --> llm
+    agent --> mg & kn & reg & biz & doc & bill & intg & mf
+    mg --> litellm
+    litellm --> llm
     bill & intg & plat --> ext
+    nodered -->|"normalized readings"| gw
+    scada -->|"production facts (per order)"| gw
+    mf -->|"reserve/consume stock"| biz
+    mf -->|"work-card PDF"| doc
+    mf -.->|"active order push"| scada
+    iot --> ts
+    iot --> kn
     core --> pg
     core --> rd
     kn & doc --> s3
@@ -149,9 +166,10 @@ sequenceDiagram
 
 ### Key flow 3 — document ingestion & retrieval
 
-Upload or sync (WebDAV/Drive) → knowledge-service stores the file, parses, chunks, embeds
-(via model-gateway), and indexes into its vector store. Agents retrieve at query time
-through the knowledge-service API — never by touching its DB.
+Upload or sync (WebDAV/Drive) → knowledge-service stores the file, parses it (via the
+internal **Unstructured** service), chunks, embeds (via model-gateway), and indexes into its
+vector store. Agents retrieve at query time through the knowledge-service API — never by
+touching its DB.
 
 ```mermaid
 flowchart LR
@@ -163,9 +181,10 @@ flowchart LR
         store["store original<br/>(S3/MinIO)"] --> parse["parse<br/>PDF / DOCX / XLSX"]
         parse --> chunk["chunk"]
         chunk --> embed["embed"]
-        embed --> idx[("pgvector index<br/>per namespace")]
+        embed --> idx[("Qdrant<br/>collection per namespace")]
     end
 
+    parse -.->|"POST /general (internal)"| unstr["Unstructured"]
     embed -.->|"POST /v1/embed"| mg["model-gateway"]
     kn -- "document.ingested event" --> bus(("Redis Streams"))
 
@@ -178,11 +197,18 @@ flowchart LR
 |---------|--------|-------|
 | Backend services | **Python 3.12 + FastAPI** | Pydantic v2 models as the contract layer |
 | Agent orchestration | **LangGraph** | Graphs per agent; Postgres checkpointer for interrupts/resume |
+| LLM access | **LiteLLM** behind `model-gateway` | Multi-provider: Anthropic/Claude cloud + local **Ollama**; routing/fallback/budgets in LiteLLM, metering/tenancy/kill-switch in model-gateway |
 | Frontend | **Next.js (App Router) + TypeScript** | Talks only to the gateway; SSE for streaming |
-| Databases | **PostgreSQL 16** (one logical DB per service) | `pgvector` in knowledge-service |
+| Databases | **PostgreSQL 16** (one logical DB per service) | **Qdrant** vector store in knowledge-service; **TimescaleDB** (Postgres + extension) for the `iot` time-series DB in iot-service |
+| IoT ingestion | **Node-RED** behind `iot-service` | Visual edge that decodes MQTT/Modbus/OPC UA and posts normalized readings **through the gateway only** (same rule as n8n); IoT dashboards + alerting are first-party — **Grafana is not used** (see [09 §3.10](./09-industry4z-platform-integration.md#310-iot-vertical--iot-service--timescaledb--node-red--decided-adopt-grafana-rejected)) |
 | Cache / queues / events | **Redis 7** | arq for per-service jobs; Redis Streams for cross-service events |
-| Object storage | **S3-compatible** (MinIO in dev) | Uploaded files, generated artifacts |
-| Auth | **JWT RS256** issued by identity-service | Gateway verifies via JWKS; services trust gateway headers |
+| Object storage | **S3-compatible** (MinIO in dev) | Uploaded files, generated artifacts; bucket-per-owning-service |
+| Document parsing | **Unstructured** (internal service) | knowledge-service calls it at ingest (PDF/DOCX/XLSX, OCR); replaces in-process parser libraries |
+| Document rendering | **Carbone** behind `document-service` | One engine for template → PDF/DOCX/XLSX (PDF via bundled headless LibreOffice); replaces headless Chromium + Word/Excel libraries. Stateless, internal-only, behind the render port |
+| Outbound integrations (OAuth) | **Nango** behind `integration-service` | Self-hosted OAuth/token backend + Connect UI for SaaS providers (Google, …); handles the OAuth dance + token refresh so agents act on a user's behalf without holding tokens. Non-OAuth (IMAP/SMTP, WebDAV) stay in the local vault |
+| E-signature | **Documenso** behind `integration-service` | Self-hosted (own Postgres) e-signature behind a `SignaturePort`; request signing on generated documents, emits `document.signed`. Net-new capability |
+| Authentication | **Authentik** (OIDC IdP) federated into identity-service; local password fallback | SSO/MFA/social handled by Authentik; identity-service resolves to a local user |
+| Authorization | **JWT RS256** issued by identity-service; tenant-scoped RBAC (roles → permission catalog) | Gateway verifies via JWKS; services resolve role→permissions and `require_permission` |
 | Service-to-service HTTP | httpx (async, pooled) | Internal network only; short-lived service tokens |
 | Migrations | Alembic per service | Each service owns its schema history |
 | Observability | OpenTelemetry traces + structured JSON logs (structlog) + Sentry | Trace ID propagated from gateway through every hop |
@@ -212,17 +238,58 @@ briefing endpoint lives in registry-service).
 
 ## 6. Identity, tenancy, and authorization
 
-- **identity-service** is the source of truth for users, companies (tenants), and
-  memberships with roles (`owner`, `co-owner`, `admin`, `member`, `viewer`).
-- Login issues an RS256 **access token** (short-lived, carries `user_id` and a list of
-  company memberships) + a **refresh token** (rotated, stored server-side).
+- **identity-service** is the source of truth for users, companies (tenants), memberships,
+  the **role model**, and the **permission catalog** (see *Authorization model* below).
+- **Authentication is federated to Authentik** (the Industry4Z SSO). Authentik is the
+  upstream OIDC identity provider (login, MFA, social, SSO sessions); **identity-service
+  remains the platform token issuer** — it resolves the federated login to a local user and
+  mints our own tokens. This is option C of
+  [09 §3.1](./09-industry4z-platform-integration.md#31-identity--authentik-): authentication
+  is outsourced, **authorization stays ours**. Email/password login is retained as a
+  fallback and for tenants that do not use SSO.
+- Login (via Authentik or local credentials) issues an RS256 **access token** (short-lived,
+  carries `user_id` and the user's company memberships with their assigned role) +
+  a **refresh token** (rotated, stored server-side).
 - The active tenant is selected per request via the `X-Company-Id` header; the gateway
   validates membership claims and forwards verified context headers.
-- **Role enforcement is local to each service** — services receive the verified role and
-  apply their own `require_role(...)` dependencies. Fine-grained grants (per-registry access
-  matrices, margin access) stay inside the owning service.
 - **Platform admin** (cross-tenant) is a separate claim; admin routes return 404 to
   non-admins (no existence leakage), preserving the monolith's ADR-015 behavior.
+
+### Authorization model — roles & permissions (RBAC)
+
+The five fixed roles of the monolith are generalized into a **tenant-scoped,
+permission-backed RBAC model** so organizations can define their own roles (the platform
+targets 15+ distinct roles across tenants) without any service code change:
+
+- **Permissions are the platform contract.** A seeded, platform-owned **permission catalog**
+  defines fine-grained, verb-style permissions grouped by domain — e.g. `registry.read`,
+  `registry.write`, `invoice.approve`, `margin.view`, `document.generate`,
+  `integration.connect`, `roles.manage`. Permissions are **not** tenant-editable; adding one
+  is a platform change. Services check **permissions, never role names**.
+- **Roles are bundles of permissions.** A role maps to a set of permissions. There are two
+  tiers:
+  - **System roles** (platform-defined, fixed, `company_id = NULL`): `owner`, `co-owner`,
+    `admin`, `member`, `viewer`. Cannot be deleted or renamed by tenants; guarantee baseline
+    behavior (e.g. every company has exactly one `owner`).
+  - **Custom roles** (tenant-defined, scoped to one `company_id`): an org admin creates roles
+    such as *Warehouse Manager*, *Accountant*, *SCADA Operator* and assigns permissions to
+    them **from the platform catalog** (a checkbox matrix). A new custom role is just a new
+    bundle of existing permissions → zero service changes.
+- **Roles are tenant-scoped.** Membership and the assigned role live in `user_companies`; a
+  user may be `owner` in company A and a custom *Viewer+* in company B. The active role is
+  selected per request via `X-Company-Id`.
+- **Managing roles is itself a permission** (`roles.manage`), granted to `owner`/`admin` by
+  default and delegable to a custom role. Platform admins manage the system roles and the
+  permission catalog globally.
+- **Enforcement is local to each service.** The token/header carries the user's *role*; each
+  service resolves that role to its **permission set** (via a cached role→permission map
+  shared through `x7-common`) and applies `require_permission(...)` dependencies.
+  `require_role(...)` remains for coarse system-role checks. Fine-grained, data-level grants
+  (per-registry access matrices, margin access) still live inside the owning service, keyed
+  off these permissions.
+
+### Service-to-service trust
+
 - Internal service-to-service calls use short-lived service tokens minted by
   identity-service (client-credentials style), so a stolen internal URL alone is not enough.
   To keep identity-service **off the per-request path**: callers mint once and cache the
@@ -245,12 +312,20 @@ sequenceDiagram
     participant C as Client
     participant GW as Gateway
     participant ID as identity-service
+    participant AK as Authentik (OIDC IdP)
     participant S as Any domain service
 
     rect rgb(245, 245, 245)
-        Note over C,ID: Login (once)
-        C->>GW: POST /auth/login (email + password)
+        Note over C,AK: Login (once) — federated via Authentik (local password as fallback)
+        C->>GW: GET /auth/authentik/start
         GW->>ID: forward
+        ID-->>C: 302 → Authentik authorize
+        C->>AK: login + MFA + consent
+        AK-->>C: 302 → callback (code)
+        C->>GW: GET /auth/authentik/callback?code=…
+        GW->>ID: forward
+        ID->>AK: exchange code, validate iss/aud/nonce
+        ID->>ID: upsert oauth_identity, resolve local user + memberships/role
         ID-->>C: access token (RS256, short-lived)<br/>+ refresh token (rotated)
     end
 
@@ -260,7 +335,7 @@ sequenceDiagram
         GW->>GW: verify signature against<br/>cached JWKS from identity-service
         GW->>GW: check company membership claim,<br/>strip client-supplied context headers
         GW->>S: forward + verified X-User-Id /<br/>X-Company-Id / X-Roles / X-Request-Id
-        S->>S: require_role(...) +<br/>fine-grained grants (own DB)
+        S->>S: resolve role → permissions,<br/>require_permission(...) + fine-grained grants (own DB)
         S-->>C: response
     end
 ```
@@ -284,8 +359,16 @@ Two distinct mechanisms, deliberately not conflated:
 | `audit.event` | any service | platform-service | Central audit trail sink |
 | `tenant.created` | identity-service | registry-service (seed system registries), billing-service (welcome token bonus) | Tenant onboarding fan-out |
 | `user.registered` | identity-service | none yet (reserved for onboarding/analytics) | Registration fact published for future consumers |
-| `invoice.issued` | business-service | platform-service | Notify owner; future hooks (accounting export) attach here |
+| `invoice.issued` | business-service | platform-service; integration-service (optional — start a signing request) | Notify owner; future hooks (accounting export) attach here |
 | `stock.low` | business-service | platform-service | Minimum-stock threshold alerts |
+| `sales_order.created` | business-service | manufacturing-service (make-to-order → production order) | Sales order triggers production (ТЗ §4.5) |
+| `document.signed` | integration-service (Documenso webhook) | platform-service (notify); business-service (optional — update signed-doc state) | E-signature completed on a generated document |
+| `sensor.anomaly` | iot-service | platform-service (notify); agent-service (optional — `/agents/iot` diagnosis) | Tenant alert-rule breach on sensor data; carries trusted `company_id` |
+| `device.alert` | iot-service | platform-service (notify); agent-service (optional) | Device-level alert (offline/fault); carries trusted `company_id` |
+| `production_order.released` / `production_order.completed` | manufacturing-service | SCADA display edge (active-order push); platform-service (notify) | Order dispatched to / finished on the shop floor |
+| `operation.confirmed` / `production.progress` | manufacturing-service | platform-service (notify); analytics/dashboards | Real-time shop-floor progress (machine + MES); feeds §4.2 OEE |
+| `material.shortage` | manufacturing-service | platform-service (notify planner) | MRP detected a net shortage for an order |
+| `purchase.requisition.requested` | manufacturing-service | business-service (purchasing → PO) | MRP auto-requisition on shortage (ТЗ §4.4) |
 
 Events carry IDs + minimal payload; consumers fetch full data over HTTP if needed
 (thin events). Every consumer is idempotent (events may be delivered more than once).
@@ -302,15 +385,20 @@ flowchart LR
     id["identity-service"] -- "tenant.created ·<br/>user.registered" --> bus
     mg["model-gateway"] -- "token.usage" --> bus
     kn["knowledge-service"] -- "document.ingested" --> bus
-    biz["business-service"] -- "invoice.issued · stock.low" --> bus
+    biz["business-service"] -- "invoice.issued · stock.low ·<br/>sales_order.created" --> bus
+    intg["integration-service"] -- "document.signed" --> bus
+    iot["iot-service"] -- "sensor.anomaly · device.alert" --> bus
+    mf["manufacturing-service"] -- "production_order.* · operation.confirmed ·<br/>production.progress · material.shortage ·<br/>purchase.requisition.requested" --> bus
     any["any service"] -- "notification.requested<br/>audit.event" --> bus
 
     bus(("Redis Streams<br/>(consumer groups)"))
 
     bus -- "tenant.created" --> reg["registry-service<br/>seed system registries"]
     bus -- "tenant.created · token.usage" --> bill["billing-service<br/>welcome bonus · metering"]
-    bus -- "document.ingested" --> ag["agent-service<br/>context cache bust"]
-    bus -- "notification.requested ·<br/>invoice.issued · stock.low ·<br/>audit.event" --> plat["platform-service<br/>email · in-app · alerts ·<br/>central audit sink"]
+    bus -- "document.ingested ·<br/>sensor.anomaly / device.alert (diagnosis)" --> ag["agent-service<br/>context cache bust ·<br/>/agents/iot"]
+    bus -- "purchase.requisition.requested → PO" --> bizc["business-service<br/>purchasing"]
+    bus -- "sales_order.created →<br/>make-to-order" --> mfc["manufacturing-service<br/>production orders"]
+    bus -- "notification.requested ·<br/>invoice.issued · stock.low ·<br/>document.signed · audit.event ·<br/>sensor.anomaly · device.alert ·<br/>material.shortage · production.progress" --> plat["platform-service<br/>email · in-app · alerts ·<br/>central audit sink"]
 ```
 
 ## 8. Frontend architecture
@@ -331,8 +419,14 @@ flowchart LR
 - **Dev**: single `docker-compose.yml` — gateway, all services, Postgres, Redis, MinIO,
   plus the Next.js dev server. One command to boot the world.
 - **Prod (phase 1)**: same images on a single host via Compose; the architecture does not
-  *require* Kubernetes to be correct. Scale-out path: move chat-heavy services
-  (agent-service, model-gateway, gateway) to multiple replicas first.
+  *require* Kubernetes to be correct. The 13 logical services co-deploy into ~5 process units
+  for this phase — the grouping rationale and split triggers are in
+  [10-phase1-co-deployment.md](./10-phase1-co-deployment.md), and the full operational guide
+  (image, `SERVICES` wiring, data-plane init, migrations, scaling) is in
+  [11-deployment.md](./11-deployment.md). Scale-out path: move chat-heavy services
+  (agent-service, model-gateway, gateway) to multiple replicas first. Data plane stays
+  **standalone PostgreSQL 16 + an S3-compatible object store** (MinIO or any S3-compatible
+  service); only the endpoint/credentials differ between dev and prod.
 - **Config**: 12-factor environment variables, one `Settings(BaseSettings)` per service
   extending a shared `common.Settings`. Secrets via env/secret manager — never in code.
 - **CI**: per-service test + lint + image build, triggered by path filters; contract tests

@@ -1,52 +1,67 @@
-# услуга за регистър
-> Гръбнакът със структурирани данни: конфигурируеми от потребителя регистри (динамични таблици) с
-> шаблони, одит, контрол на достъпа и семантични колони, за които агентите могат да разсъждават.
-**Състояние:** 📋 планирано · **Порт (dev):** 8050 · ​​**База данни:** `registry`
-## Отговорности
-- Динамични регистри: дефинирани от потребителя колони, JSONB редове, пълен CRUD с оптимистично заключване.
-- Матрица за достъп по регистър; одитна пътека; ревизии на редове; XLSX експорт.
-- **Регистрационни шаблони** (9 домейна × основни/стандартни/професионални нива): контрагенти, оферти,
-  договори, активи, служители, проекти, фактури за покупка/продажба, задачи.
-- Системни регистри, поставени на `tenant.created`: работен конвейер (Работен регистър),
-  фактури (Фактури — до преминаване към бизнес-услуги), лични + офис задачи.
-- **Канонични роли на колони** (`client_name`, `eik`, `offer_number`, …), така че агентски инструменти
-  разрешаване на полета семантично в различно именувани регистри на наематели.
-- API за удобство на клиенти (контрагенти); агрегиране на брифинг на таблото.
-## API скица
+# registry-service
+
+> The structured-data backbone: user-configurable registries (dynamic tables) with
+> templates, audit, access control, and semantic columns agents can reason about.
+
+**Status:** 📋 planned · **Port (dev):** 8050 · **Database:** `registry`
+
+## Responsibilities
+
+- Dynamic registries: user-defined columns, JSONB rows, full CRUD with optimistic locking.
+- Per-registry access matrix; audit trail; row revisions; XLSX export.
+- **Registry templates** (9 domains × core/standard/pro tiers): counterparties, offers,
+  contracts, assets, employees, projects, purchase/sales invoices, tasks.
+- System registries seeded on `tenant.created`: work pipeline (Работен регистър),
+  invoices (Фактури — until it graduates to business-service), personal + office tasks.
+- **Canonical column roles** (`client_name`, `eik`, `offer_number`, …) so agent tools
+  resolve fields semantically across differently-named tenant registries.
+- Clients (counterparties) convenience API; dashboard briefing aggregation.
+
+## API sketch
+
 `GET/POST /registries` · `GET/POST /registries/{id}/columns` ·
-`GET/POST/PATCH /registries/{id}/rows` (+ заявка, експортиране) · `GET/POST /registries/{id}/access` ·
+`GET/POST/PATCH /registries/{id}/rows` (+ query, export) · `GET/POST /registries/{id}/access` ·
 `GET /templates` · `POST /templates/{slug}/install` · `GET /clients/search` ·
 `GET /dashboard/briefing`
-## Притежавани данни
+
+## Data owned
+
 `registries`, `registry_columns`, `registry_rows` (JSONB), `registry_access`,
 `registry_audit`, `row_revisions`, `registry_templates`, `template_columns`.
-## Зависимости
-| Посока | Какво |
-|---|---|
-| Обаден от | агент-услуга (инструменти за регистър), бизнес-услуга (търсене на контрагент), документ-услуга (ред с данни за документи), шлюз (UI) |
-| Обаждания | нищо (листо услуга) |
-| Събития в | `tenant.created` → регистри на началната система |
-| работни места | няма (синхронен домейн) |
 
-## Бележки по дизайна
-- **Граница с бизнес-услуга**: гъвкави/дефинирани от потребителя данни живеят тук; данни чиито
-  некоректността е незаконна или финансово грешна (фактури, наличност) живее в
-  бизнес-сервиз. Вижте [02 — гранична таблица](../../02-service-catalog.md#boundary-with-registry-service-important).
-- 2507-редът `registries/routes.js` на монолита се разлага на маршрути / домейн /
-  слоеве на хранилището тук — паритетът на поведението (заключване, одит, канонични роли) е
-  бар за приемане, обхванат от пренасянето на неговите тестови случаи.
-- Задачите **не** са отделен модул: те се доставят като шаблони на системния регистър
-  (виж [04 §3](../../04-functional-coverage.md)).
-## Контролен списък за внедряване
-- [ ] Схема + Алембик; JSONB стойности на редове + въведени дефиниции на колони
-- [ ] Ред CRUD с оптимистично заключване (колона с версия) + запис на одит
-- [ ] Налагане на матрицата за достъп (роли за всеки регистър)
-- [ ] Помощник за разрешаване на канонична роля (използван от инструменти на агент)
-- [ ] Каталог с шаблони + крайна точка за инсталиране; потребител на зареждане на системен регистър
-- [ ] XLSX експортиране; ревизии на ред + възстановяване
-- [ ] Обобщаване на брифинги на таблото за управление
-- [ ] RLS политики
-## Препратки
-- [02 — запис в каталога на услугите](../../02-service-catalog.md#registry-service-8050)
-- [04 — картографиране на функционално покритие](../../04-functional-coverage.md)
-- [07 §5.6 — графика на зависимости](../../07-dependency-graphs.md#56-registry-service)
+## Dependencies
+
+| Direction | What |
+|---|---|
+| Called by | agent-service (registry tools), business-service (counterparty lookup), document-service (row data for documents), gateway (UI) |
+| Calls | nothing (leaf service) |
+| Events in | `tenant.created` → seed system registries |
+| Jobs | none (synchronous domain) |
+
+## Design notes
+
+- **Boundary with business-service**: flexible/user-defined data lives here; data whose
+  incorrectness is illegal or financially wrong (invoices, stock) lives in
+  business-service. See [02 — boundary table](../../02-service-catalog.md#boundary-with-registry-service-important).
+- The monolith's 2507-line `registries/routes.js` decomposes into routes / domain /
+  repository layers here — behavior parity (locking, audit, canonical roles) is the
+  acceptance bar, covered by porting its test cases.
+- Tasks are **not** a separate module: they ship as system registry templates
+  (see [04 §3](../../04-functional-coverage.md)).
+
+## Implementation checklist
+
+- [ ] Schema + Alembic; JSONB row values + typed column definitions
+- [ ] Row CRUD with optimistic locking (version column) + audit writes
+- [ ] Access matrix enforcement (per-registry roles)
+- [ ] Canonical-role resolution helper (used by agent tools)
+- [ ] Template catalog + install endpoint; system-registry seeding consumer
+- [ ] XLSX export; row revisions + restore
+- [ ] Dashboard briefing aggregation
+- [ ] RLS policies
+
+## References
+
+- [02 — service catalog entry](../../02-service-catalog.md#registry-service-8050)
+- [04 — functional coverage mapping](../../04-functional-coverage.md)
+- [07 §5.6 — dependency graph](../../07-dependency-graphs.md#56-registry-service)

@@ -1,22 +1,42 @@
-# 7x7 Microservice Platform — Архитектурна документация
-Целева архитектура за следващото поколение на платформата 7x7: **агентна ERP система**изградени като FastAPI микроуслуги зад един шлюз, с базирани на LangGraph агенти иУеб интерфейс Next.js (повече интерфейси — мобилно приложение, ботове на Telegram/Viber — включва се по-късно).
-Този набор от документи описва *бъдещата* система. Той обхваща функционалността насъществуващ монолит при`7x7-platform`, минус характеристиките, отбелязани от собствените одити на монолитакато мъртъв или излишен.
-## Ред на четене
-| # | Документ | Какво отговаря |
-|---|----------|-----------------|
-| 1 | [01-architecture-overview.md](./01-architecture-overview.md) | Какво строим? Топология, принципи, технологичен стек, междусекторни проблеми (авторизация, събития, наблюдаемост) |
-| 2 | [02-service-catalog.md](./02-service-catalog.md) | Какви услуги съществуват? Отговорности, API повърхности, собственост върху данните, фонови задачи |
-| 3 | [03-agent-platform.md](./03-agent-platform.md) | Как работят агентите и инструментите на LangGraph и как да добавяме нови, без да докосваме основния код? |
-| 4 | [04-функционално покритие.md](./04-functional-coverage.md) | Къде се намира всяка характеристика на стария монолит в новата система – и какво умишлено е пропуснато? |
-| 5 | [05-migration-pros-and-cons.md](./05-migration-pros-and-cons.md) | Трябва ли да мигрираме? Честни плюсове, минуси, рискове и стратегия за поетапна миграция |
-| 6 | [06-architectural-patterns.md](./06-architectural-patterns.md) | Справка: всеки използван архитектурен модел (шлюз, шестоъгълник, събития, удушвач, ReAct, …) — какво представлява, защо е тук, колко струва |
-| 7 | [07-dependency-graphs.md](./07-dependency-graphs.md) | Всяка зависимост, начертана: графики на цялата система (пълна, синхронизиране на HTTP, събития, инфраструктура) + една графика на услуга с вътрешна структура и външни зависимости |
-| 8 | [08-архитектура на база данни.md](./08-database-architecture.md) | Къде живеят данните? Каталог база данни за услуга, схеми за база данни (ERD) и как базите данни се препращат една към друга без кръстосано свързване на база данни |
-| 9 | [услуги/](./services/README.md) | Начални точки за всяка услуга — една папка за услуга с отговорности, API скица, зависимости и контролен списък за внедряване |
-| 10 | [libs/common/](./libs/common/README.md) | The`x7-common`споделено ядро ​​- конфигурация, удостоверяване на водоснабдяване, обединен HTTP, автобус за събития, наблюдаемост, DTO между услуги |
+# 7x7 Microservice Platform — Architecture Documentation
 
-## Резюме от един абзац
-Целият трафик – уеб, бъдещи мобилни, бъдещи чат ботове – влиза през един **API Gateway**(FastAPI). Зад него стоят малки, независимо внедряеми FastAPI услуги, всяка притежаваща своясобствена база данни (база данни за услуга, без споделени таблици). **Агентската услуга** хоства LangGraphграфики, открити от папки за всеки агент (`manifest.yaml` + `graph.py`): добавяне на агент или aинструментът никога не изисква редактиране на основния код за изпълнение. LLM обажданията от всяка услуга минават през a**Model Gateway**, който абстрахира доставчици (Anthropic, OpenAI, ...) и излъчва използване на токенисъбития, използвани от **Услугата за таксуване**. Предният интерфейс е приложение Next.js, което говори само сшлюзът; адаптерите за чат канали (Telegram, Viber) са тънки клиенти на същия API на шлюза.
-## Конвенции, използвани в тези документи
-- **Стар / монолит** =`7x7-platform`(Node.js/Express, PM2, единичен Postgres).- **Ново / цел** = това хранилище (`7X7-microservice`).
-- Имената на услугите са kebab-case (`agent-service`); вътрешните пакети на Python са snake_case.- Диаграмите на русалки се изобразяват в GitHub, Cursor и повечето зрители на Markdown.
+Target architecture for the next generation of the 7x7 platform: an **agentic ERP system**
+built as FastAPI microservices behind a single gateway, with LangGraph-powered agents and a
+Next.js web frontend (more frontends — mobile app, Telegram/Viber bots — pluggable later).
+
+This documentation set describes the *to-be* system. It covers the functionality of the
+existing monolith at `7x7-platform`, minus features that the monolith's own audits flagged
+as dead or redundant.
+
+## Reading order
+
+| # | Document | What it answers |
+|---|----------|-----------------|
+| 1 | [01-architecture-overview.md](./01-architecture-overview.md) | What are we building? Topology, principles, tech stack, cross-cutting concerns (auth, events, observability) |
+| 2 | [02-service-catalog.md](./02-service-catalog.md) | What services exist? Responsibilities, API surfaces, data ownership, background jobs |
+| 3 | [03-agent-platform.md](./03-agent-platform.md) | How do LangGraph agents and tools work, and how do we add new ones without touching core code? |
+| 4 | [04-functional-coverage.md](./04-functional-coverage.md) | Where does each feature of the old monolith live in the new system — and what was deliberately dropped? |
+| 5 | [05-migration-pros-and-cons.md](./05-migration-pros-and-cons.md) | Should we migrate? Honest pros, cons, risks, and a phased migration strategy |
+| 6 | [06-architectural-patterns.md](./06-architectural-patterns.md) | Reference: every architectural pattern used (gateway, hexagonal, events, strangler, ReAct, …) — what it is, why it's here, what it costs |
+| 7 | [07-dependency-graphs.md](./07-dependency-graphs.md) | Every dependency, drawn: whole-system graphs (full, sync HTTP, events, infrastructure) + one graph per service with internal structure and external dependencies |
+| 8 | [08-database-architecture.md](./08-database-architecture.md) | Where does data live? Database-per-service catalog, per-DB schemas (ERDs), and how databases reference each other without cross-DB joins |
+| 9 | [services/](./services/README.md) | Per-service starting points — one folder per service with responsibilities, API sketch, dependencies, and an implementation checklist |
+| 10 | [libs/common/](./libs/common/README.md) | The `x7-common` shared kernel — config, auth plumbing, pooled HTTP, event bus, observability, cross-service DTOs |
+
+## One-paragraph summary
+
+All traffic — web, future mobile, future chat bots — enters through a single **API Gateway**
+(FastAPI). Behind it sit small, independently deployable FastAPI services, each owning its
+own database (database-per-service, no shared tables). The **Agent Service** hosts LangGraph
+graphs discovered from per-agent folders (`manifest.yaml` + `graph.py`): adding an agent or a
+tool never requires editing core runtime code. LLM calls from every service go through a
+**Model Gateway** that abstracts providers (Anthropic, OpenAI, …) and emits token-usage
+events consumed by the **Billing Service**. The frontend is a Next.js app that talks only to
+the gateway; chat-channel adapters (Telegram, Viber) are thin clients of the same gateway API.
+
+## Conventions used in these docs
+
+- **Old / monolith** = `7x7-platform` (Node.js/Express, PM2, single Postgres).
+- **New / target** = this repository (`7X7-microservice`).
+- Service names are kebab-case (`agent-service`); internal Python packages are snake_case.
+- Mermaid diagrams render in GitHub, Cursor, and most Markdown viewers.

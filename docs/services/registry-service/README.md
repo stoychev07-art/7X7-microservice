@@ -8,7 +8,11 @@
 ## Responsibilities
 
 - Dynamic registries: user-defined columns, JSONB rows, full CRUD with optimistic locking.
-- Per-registry access matrix; audit trail; row revisions; XLSX export.
+- Per-registry access matrix; audit trail; row revisions; XLSX export. The matrix is the
+  **fine-grained, data-level grant layer** that sits *below* the platform RBAC
+  ([01 §6](../../01-architecture-overview.md#authorization-model--roles--permissions-rbac)):
+  coarse capability is gated by catalog permissions (`registry.read`/`registry.write` via
+  `require_permission`), then this matrix scopes *which* registries a role/user may touch.
 - **Registry templates** (9 domains × core/standard/pro tiers): counterparties, offers,
   contracts, assets, employees, projects, purchase/sales invoices, tasks.
 - System registries seeded on `tenant.created`: work pipeline (Работен регистър),
@@ -53,7 +57,7 @@
 
 - [ ] Schema + Alembic; JSONB row values + typed column definitions
 - [ ] Row CRUD with optimistic locking (version column) + audit writes
-- [ ] Access matrix enforcement (per-registry roles)
+- [ ] Access matrix enforcement (per-registry grants) layered under `require_permission` (`registry.read`/`registry.write`)
 - [ ] Canonical-role resolution helper (used by agent tools)
 - [ ] Template catalog + install endpoint; system-registry seeding consumer
 - [ ] XLSX export; row revisions + restore
