@@ -37,10 +37,13 @@ flowchart LR
     sup --> pl
     dead --> x(("dropped — see §4"))
     regs -. "Фактури graduates<br/>(phase after parity)" .-> biz["business-service<br/>invoices · inventory · spendings<br/>(net-new — see §6)"]
+    scada(("SCADA · MES · PLCs<br/>(no monolith source)")) --> mf["manufacturing-service<br/>orders · BOM · MRP · MES<br/>(net-new — see §7)"]
 
     style dead fill:#fde8e8,stroke:#b91c1c
     style x fill:#fde8e8,stroke:#b91c1c
     style biz fill:#e7f5e7,stroke:#15803d
+    style mf fill:#e7f5e7,stroke:#15803d
+    style scada fill:#eef2ff,stroke:#3b6fc9
 ```
 
 ## 1. Carried over — feature mapping
@@ -60,7 +63,7 @@ flowchart LR
 | AI memory (`remember`), directives, personalization | `core/memory`, ai_memory tables | **agent-service** | |
 | Skills (Умения) + folders + temp expiry | `core/skills` | **agent-service** | Injected via context loader |
 | Proactive page summaries | `POST /core/ai/proactive` | **agent-service** (ephemeral endpoint) | |
-| Pluggable AI providers (admin), encrypted keys, AI kill switch, Anthropic balance watch | `core.ai_providers`, `core/owner/aiToggle` | **model-gateway** | Centralized for *all* services, not just chat |
+| Pluggable AI providers (admin), encrypted keys, AI kill switch, balance watch | `core.ai_providers`, `core/owner/aiToggle` | **model-gateway** (thin owner, backed by **LiteLLM**; multi-provider: Claude + local Ollama) | Centralized for *all* services, not just chat; provider plumbing inherited from LiteLLM |
 | Token metering per feature, limits, alerts | `core/tokens` | **billing-service** (via `token.usage` events from model-gateway) | Metering becomes automatic — no per-callsite bookkeeping |
 | Token packages, Stripe checkout + webhook, saved cards, auto-top-up, welcome bonus, limit requests | `core/payments` | **billing-service** | Untested-in-monolith payments code gets a tested rewrite |
 | Dynamic registries (columns, rows, locking, access matrix, audit, revisions, XLSX export) | `core/registries` (2507-LOC routes) | **registry-service** | Same model incl. `canonical_role` semantic columns |
@@ -71,17 +74,19 @@ flowchart LR
 | Master price list + history + AI XLSX import | `core/priceList` | **document-service** | |
 | Margins (category/item, access) | `core/margins` | **document-service** | |
 | KSS analyze/fill (construction cost sheets) | `core/kss` | **document-service** | |
-| Visual document templates + PDF render (Puppeteer) | `core/templates`, `core/documents` | **document-service** | Headless-Chromium rendering isolated in one service |
+| Visual document templates + PDF/DOCX/XLSX render | `core/templates`, `core/documents` | **document-service** | Rendering delegated to **Carbone** (one engine, behind the render port) — replaces headless Chromium + Word/Excel libs; see [09 §3.7](./09-industry4z-platform-integration.md#37-documents--carbone--documenso-) |
 | Offer drafting | `core/offers` | **document-service** + `offer_draft` tool | |
 | Document library, categories, bulk upload | `core/library` | **knowledge-service** | |
-| Embeddings + chunking + knowledge search | `core/embeddings`, `document_chunks` | **knowledge-service** (pgvector) | Embeddings via model-gateway |
+| File parsing (PDF/DOCX/XLSX, OCR) | `core/library` parse step | **knowledge-service** (via **Unstructured**) | Internal Unstructured service; replaces in-process parser libraries |
+| Embeddings + chunking + knowledge search | `core/embeddings`, `document_chunks` | **knowledge-service** (Qdrant) | Embeddings via model-gateway |
 | Archive (sources, promote-to-facts, permissions, reindex) | `core/archive` | **knowledge-service** | |
 | Projects as retrieval scopes (`switch_project`) | `core/projects` | **knowledge-service** | Active project in Redis, as today |
 | WebDAV connections + folder sync | `core/file-server`, sync-worker | **integration-service** (connections/IO) + **knowledge-service** (sync engine) | Per-file transactions kept |
 | Google Drive browse/upload/sync | `core/google` | same split as WebDAV | Long-transaction anti-pattern (open item in `TECH_DEBT.md`) fixed by design |
 | Gmail tools (read/send/label/filter) | `core/gmail` | **integration-service** + agent tools | |
 | Universal email (IMAP/SMTP), Brevo delivery webhook | `core/email` | **integration-service** (connections) + **platform-service** (transactional send) | |
-| Integration catalog, install/connect lifecycle, access modes, encrypted credentials | `core/marketplace`, `integrations/` | **integration-service** | Same folder-discovered adapter pattern |
+| Integration catalog, install/connect lifecycle, access modes, encrypted credentials | `core/marketplace`, `integrations/` | **integration-service** | Same folder-discovered adapter pattern; OAuth dance + token refresh delegated to self-hosted **Nango** (non-OAuth secrets stay in the local vault) — see [09 §3.6](./09-industry4z-platform-integration.md#36-integrations--nango-) |
+| **E-signature** on generated documents (request, sign, signed PDF + certificate) | — (**net-new**, no monolith equivalent) | **integration-service** (`esign` adapter) | Delegated to self-hosted **Documenso** behind a `SignaturePort`; triggered by API or `invoice.issued`/contract events, emits `document.signed` — see [09 §3.7](./09-industry4z-platform-integration.md#37-documents--carbone--documenso-) |
 | In-app notifications (bell) | `core/notifications` | **platform-service** | |
 | Ops alerts to Telegram | `core/alerts` | **platform-service** | |
 | Support tickets + staff replies + email notify | `core/support` | **platform-service** | |
@@ -184,3 +189,34 @@ What this means for the migration:
 - **Agent tools** (`invoice_create`, `invoice_list`, `inventory_check`, `stock_move`,
   `expense_add`, `expense_summary`) make the new domains immediately available in the
   workspace chat with the standard write-approval flow.
+
+## 7. New manufacturing vertical (SCADA + MES + MRP)
+
+A second service has **no monolith counterpart**:
+[manufacturing-service](./services/manufacturing-service/README.md) — the production core
+required by the SCADA+ERP brief (ТЗ §4.1 Производство и MRP, §3.2 MES terminals, and the
+order-linked half of §5 SCADA↔ERP). The monolith never modeled production: no production
+orders, no BOM/routing, no MRP, no shop-floor confirmations. This is **net-new**, built like
+iot-service as a first-party vertical rather than a port of existing code.
+
+| ТЗ requirement | Home | Notes |
+|---|---|---|
+| Production orders, BOM, operation routing | **manufacturing-service** | orders snapshot BOM/routing versions; per-operation state machine |
+| MRP (auto material needs, shortage signaling) | **manufacturing-service** | BOM explosion vs live stock (business-service); `material.shortage` + `purchase.requisition.requested` |
+| Capacity planning / work-center loading | **manufacturing-service** | CRP load report (infinite-capacity first) |
+| Scrap / rework per operation | **manufacturing-service** | reason-coded confirmations |
+| MES terminals (manual segment) | **manufacturing-service** (MES API) | QR/PIN login, start/confirm/scrap; clients are gateway-only |
+| SCADA→ERP order-linked facts (qty, downtime, energy) | **manufacturing-service** ingest + **iot-service** telemetry | production facts to manufacturing; raw kW/kWh/status to iot |
+| OEE / energy-per-order / Big-Data dashboards (§4.2) | analytics join of **manufacturing** + **iot** | order/window binding (manufacturing) × series (iot) |
+| Purchasing (requisition→PO→receipt→3-way match, §4.4) | **business-service** (purchasing) | MRP only *requests* a requisition via event |
+| Sales orders / make-to-order (§4.5) | **business-service** → `sales_order.created` → **manufacturing** | a sales order spawns a production order |
+
+How it relates to the rest:
+
+- **Stock stays in business-service.** Manufacturing keeps only the per-order material plan
+  and *requests* reserve/consume — one stock ledger, no duplication
+  ([02 boundary table](./02-service-catalog.md#boundary-with-business-service-and-iot-service-important)).
+- **Telemetry stays in iot-service.** Manufacturing owns order-linked production facts;
+  iot owns the machine signals/energy historian; they meet only in the analytics layer.
+- **Agent tools** (`production_order_create`, `mrp_run`, `production_status`,
+  `work_confirm`, …) expose production in the workspace chat with the write-approval flow.

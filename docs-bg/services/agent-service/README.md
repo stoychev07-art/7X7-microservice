@@ -1,34 +1,91 @@
-# агент-услуга
-> Работното време на агента LangGraph — сърцето на платформата. Открива агенти от папки,> управлява техните графики, налага прекъсванията на списъка с разрешени инструменти и одобрението за писане и притежава> история на разговорите (сесии + съобщения) в същата база данни.
-**Състояние:** 📋 планирано · **Порт (dev):** 8020 · **База данни:**`agent`
+# agent-service
 
-## Отговорности
-- Откриване на агент: сканиране`app/agents/*/manifest.yaml`при стартиране, компилиране на графики, монтиране на aединичен параметричен маршрут — **добавянето на агент никога не засяга основния код**.- Графика по подразбиране: контекст на зареждане → цикъл на инструмента ReAct → прекъсване на одобрение за инструменти за запис.- Споделен каталог с инструменти (`app/tools/`) със списъци с разрешени манифести за всеки агент.- Human-in-the-loop: контролна точка за писане на инструменти в Postgres и пауза;`/resume`продължава.- Контекстно зареждане на ход: фирмен профил, умения, AI памет, активен проект - воден отманифеста`context:`блок.- AI памет (`remember`инструмент, директиви) и умения (подканващи фрагменти, папки, изтичане).- SSE поточно предаване на токени, събития на инструменти и рамки за одобрение.- **Разговори** (`conversations/`модул): сесии на потребител/агент/канал, съобщениеистория с пагинирани четения, метаданни за прикачени файлове, обобщения за дълга история, изчистване на TTL.
-## API скица
-`GET /agents`(каталог, филтриран по канал) ·`POST /agents/{id}/chat`(SSE) ·`POST /agents/{id}/resume`(решение за одобрение) ·`POST /agents/{id}/proactive`(ефимерно резюме на страницата — не се поддържа сесия) ·`GET /sessions?user=&agent=` · `GET /sessions/{id}/messages?limit=` ·
+> The LangGraph agent runtime — the heart of the platform. Discovers agents from folders,
+> runs their graphs, enforces the tool allow-list and write-approval interrupts, and owns
+> conversation history (sessions + messages) in the same database.
+
+**Status:** 📋 planned · **Port (dev):** 8020 · **Database:** `agent`
+
+## Responsibilities
+
+- Agent discovery: scan `app/agents/*/manifest.yaml` at startup, compile graphs, mount a
+  single parametric route — **adding an agent never touches core code**.
+- Default graph: load context → ReAct tool loop → approval interrupt for write tools.
+- Shared tool catalog (`app/tools/`) with per-agent manifest allow-lists.
+- Human-in-the-loop: write tools checkpoint to Postgres and pause; `/resume` continues.
+- Context loading per turn: company profile, skills, AI memory, active project — driven by
+  the manifest's `context:` block.
+- AI memory (`remember` tool, directives) and skills (prompt snippets, folders, expiry).
+- SSE streaming of tokens, tool events, and approval frames.
+- **Conversations** (`conversations/` module): sessions per user/agent/channel, message
+  history with paginated reads, attachment metadata, long-history summaries, TTL purge.
+
+## API sketch
+
+`GET /agents` (catalog, filterable by channel) · `POST /agents/{id}/chat` (SSE) ·
+`POST /agents/{id}/resume` (approval decision) ·
+`POST /agents/{id}/proactive` (ephemeral page summary — no session persisted) ·
+`GET /sessions?user=&agent=` · `GET /sessions/{id}/messages?limit=` ·
 `DELETE /sessions/{id}` · `GET/POST /memory` · `GET/POST /skills`
 
-## Притежавани данни
-Контролни точки на LangGraph (състояние на прекъсване/възобновяване),`sessions`, `messages`, `attachments`,
-`ai_memory`, `user_skills`, `tool_validation_log`, `ai_traces`. Няма документи/вектори —това е услуга на знанието.
-## Зависимости
-| Посока | Какво |
-|---|---|
-| Обаждания | модел-шлюз (LLM), услуга за знания (извличане), регистър / бизнес / документ / интеграция / услуги за фактуриране (инструменти) |
-| Обаден от | шлюз (цял чат трафик), бъдещи адаптери за канали |
-| Събития извън | `audit.event` |
-| Събития в | `document.ingested`(бюст на контекстния кеш) |
-| работни места | изтичане на временното умение, задържане на следа, изчистване на сесия (задържане, ежедневно) |
+## Data owned
 
-## Бележки по дизайна
-- **Това е единственият разклоняващ се хъб** в матрицата на повикванията — дръжте всеки инструмент зад порт, така чецелите могат да преминават от монолитни URL адреси към нови услуги по време на миграцията.- **Разговорите са модул, а не услуга** — техният единствен потребител е агент-услугата(адаптерите за канали влизат през API за чат, никога през магазина) и четене/запис на историятасе случва при всеки ход на чат, така че прескачането в мрежата тук би било чист данък за забавяне. Домейнътвижда само`ConversationStore`пристанище; ако някога се появи втори потребител, извличанев услуга е една смяна на адаптер(вижте [02 § Съзнателно обединени](../../02-service-catalog.md#deliberately-merged-boundaries)).
-- Запазете`conversations/`скучен модул: тънък CRUD, без логика на агента. Обобщение,контекстни прозорци и подкана за сглобяване остават в домейна на агента. The`channel`поле наsessions поддържа разговор в Telegram и уеб разговор със същия агентотделни (или обединени по-късно, по избор на продукт).- Първоначални агенти: единичен`erp-agent`възпроизвеждане на глобалния оркестратор на монолита;специализирани агенти (офертен агент, …) идват след това, като папки.- Инструмент`kind="write"`⇒ прекъсването се налага от графиката, никога от подкана.- Заменя монолита`workspace_sessions` / `workspace_messages`маси домашини за чат в работното пространство.
-## Контролен списък за внедряване
-- [ ] `Manifest`Пидантичен модел + откриване/регистър с пропускане на счупена папка- [ ] `AgentState`схема +`build_default_graph()` + `default_nodes()`
-- [ ] контролна точка на Postgres;`/resume`крайна точка; одобрение SSE рамки- [ ] Ключове за идемпотентност за инструменти за писане (извлечени от контролна точка + идентификатор на одобрение - сриврезюмето никога не трябва да изпълнява двойно запис; вижте [03 § Стълб 5](../../03-agent-platform.md#pillar-5--write-actions-are-interrupts-not-trust))
-- [ ] Кутия с инструменти:`specs(allowed)` / `dispatch()`; `ToolContext`с дедупиране на ход- [ ] Първи инструменти:`knowledge_search`, `registry_query`, `registry_add_row`(пиши)- [ ] Модул за разговори: схема (сесии, съобщения с role/tool_call_id,прикачени файлове),`ConversationStore`порт + хранилище на Postgres, добавяне на атомно обръщане,пагиниране на курсора, задание за задържане- [ ] Портове + httpx адаптери за модел-шлюз / знания / регистър- [] SSE протокол: token, tool_call, approval_required, done, error frames- [ ] `erp-agent`манифест + системна подкана (порт монолитна подкана v24 като базова линия)- [ ] Ограничение за итерация + токени за защита на бюджета- [ ] Правила за определяне на обхвата на клиента + RLS
-## Препратки
-- [03 — Агентска платформа и разширяемост](../../03-agent-platform.md)(основният документ)- [01 — ключови потоци 1 и 2](../../01-architecture-overview.md#3-system-topology)
-- [02 — запис в каталога на услугите](../../02-service-catalog.md#agent-service-8020)
-- [06 §5 — агентни модели](../../06-architectural-patterns.md)
-- [07 §5.3 — графика на зависимост](../../07-dependency-graphs.md#53-agent-service)
+LangGraph checkpoints (interrupt/resume state), `sessions`, `messages`, `attachments`,
+`ai_memory`, `user_skills`, `tool_validation_log`, `ai_traces`. No documents/vectors —
+that's knowledge-service.
+
+## Dependencies
+
+| Direction | What |
+|---|---|
+| Calls | model-gateway (LLM), knowledge-service (retrieve), registry / business / document / integration / billing services (tools) |
+| Called by | gateway (all chat traffic), future channel adapters |
+| Events out | `audit.event` |
+| Events in | `document.ingested` (context cache bust) |
+| Jobs | temp-skill expiry, trace retention, session purge (retention, daily) |
+
+## Design notes
+
+- **This is the only fan-out hub** in the call matrix — keep every tool behind a port so
+  targets can flip from monolith URLs to new services during migration.
+- **Conversations are a module, not a service** — agent-service is their only consumer
+  (channel adapters enter through the chat API, never the store), and history read/write
+  happens on every chat turn, so a network hop here would be pure latency tax. The domain
+  sees only the `ConversationStore` port; if a second consumer ever appears, extraction
+  into a service is one adapter swap
+  (see [02 § Deliberately merged](../../02-service-catalog.md#deliberately-merged-boundaries)).
+- Keep the `conversations/` module boring: thin CRUD, no agent logic. Summarization,
+  context windows, and prompt assembly stay in the agent domain. The `channel` field on
+  sessions keeps a Telegram conversation and a web conversation with the same agent
+  separate (or merged later, by product choice).
+- Initial agents: a single `erp-agent` reproducing the monolith's global orchestrator;
+  specialized agents (offer-agent, …) come after, as folders.
+- Tool `kind="write"` ⇒ interrupt is enforced by the graph, never by prompt wording.
+- Replaces the monolith's `workspace_sessions` / `workspace_messages` tables alongside the
+  workspace chat machinery.
+
+## Implementation checklist
+
+- [ ] `Manifest` Pydantic model + discovery/registry with skip-on-broken-folder
+- [ ] `AgentState` schema + `build_default_graph()` + `default_nodes()`
+- [ ] Postgres checkpointer; `/resume` endpoint; approval SSE frames
+- [ ] Idempotency keys for write tools (derived from checkpoint + approval ID — a crashed
+      resume must never double-execute a write; see [03 § Pillar 5](../../03-agent-platform.md#pillar-5--write-actions-are-interrupts-not-trust))
+- [ ] ToolBox: `specs(allowed)` / `dispatch()`; `ToolContext` with per-turn dedupe
+- [ ] First tools: `knowledge_search`, `registry_query`, `registry_add_row` (write)
+- [ ] Conversations module: schema (sessions, messages with role/tool_call_id,
+      attachments), `ConversationStore` port + Postgres repository, atomic turn append,
+      cursor pagination, retention job
+- [ ] Ports + httpx adapters for model-gateway / knowledge / registry
+- [ ] SSE protocol: token, tool_call, approval_required, done, error frames
+- [ ] `erp-agent` manifest + system prompt (port monolith prompt v24 as baseline)
+- [ ] Iteration cap + token budget guards
+- [ ] Tenant scoping + RLS policies
+
+## References
+
+- [03 — Agent Platform & Extensibility](../../03-agent-platform.md) (the primary doc)
+- [01 — key flows 1 & 2](../../01-architecture-overview.md#3-system-topology)
+- [02 — service catalog entry](../../02-service-catalog.md#agent-service-8020)
+- [06 §5 — agentic patterns](../../06-architectural-patterns.md)
+- [07 §5.3 — dependency graph](../../07-dependency-graphs.md#53-agent-service)

@@ -45,7 +45,8 @@ see the approval flow end to end).
   model-gateway for thinking, and calls tools to act. It is the **only service that fans out**
   to everything else — because tools need to touch everything.
 - **knowledge-service is the company's searchable memory.** You upload documents; it parses
-  them, slices them into chunks, turns each chunk into a vector (a numeric fingerprint of
+  them (via the internal **Unstructured** service), slices them into chunks, turns each chunk
+  into a vector (a numeric fingerprint of
   meaning) via the model-gateway, and stores them so the agent can later ask "what do we know
   about X?" and get the relevant passages back.
 
@@ -57,7 +58,7 @@ flowchart TB
     mg["model-gateway"]
     kn["knowledge-service<br/>parse · embed · search"]
     pg[("agent DB<br/>+ checkpoints")]
-    knpg[("knowledge DB<br/>+ pgvector")]
+    knpg[("knowledge DB<br/>+ Qdrant")]
     s3[("MinIO<br/>original files")]
 
     client -->|"SSE chat"| gw --> agent
@@ -129,8 +130,9 @@ the system retries, the action happens exactly once.
 ```mermaid
 flowchart LR
     up["Upload PDF/DOCX/XLSX"] --> store["store original (MinIO)"]
-    store --> parse["parse text"] --> chunk["split into chunks"]
-    chunk --> embed["embed each chunk"] --> idx[("pgvector, by namespace")]
+    store --> parse["parse text<br/>(Unstructured)"] --> chunk["split into chunks"]
+    chunk --> embed["embed each chunk"] --> idx[("Qdrant, by namespace")]
+    parse -.->|"POST /general"| unstr["Unstructured"]
     embed -.->|"POST /v1/embed"| mg["model-gateway"]
     idx -. "document.ingested" .-> agent["agent-service<br/>(invalidate stale cache)"]
 ```

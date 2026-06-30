@@ -1,47 +1,62 @@
-# услуга за знания
-> Входящи документи, изведени обосновани отговори: библиотека, синтактичен анализ, групиране, вграждания, пространство от имена
-> векторно търсене, RAG факти, проекти и машини за синхронизиране на файлове.
-**Състояние:** 📋 планирано · **Порт (dev):** 8040 · **База данни:** `knowledge` (с pgvector)
-## Отговорности
-- Библиотека с документи: категории, качване на файлове (PDF/DOCX/XLSX), групово качване.
-- Парсиране → разделяне → вграждане (чрез модел-шлюз) → pgvector индекс за **пространство от имена**.
-- `POST /search`: хибридно извличане с обхват на пространство от имена (вектор + ключова дума) — бекенда на
-  `knowledge_search` агент инструмент и на манифест `data_namespaces`.
-- RAG факти: популяризирайте подбрано съдържание от документи в сбор от факти.
-- Проекти като обхвати за извличане (активен проект на потребител, Redis).
-- Архивни изгледи: източници, статистика, преиндексиране, матрица на разрешения.
-- **Механизми за синхронизиране**: Синхронизиране на папки WebDAV и Google Drive — транзакции на файл, 30 минути
-  почистване, краен срок на стенен часовник + продължаване на повторно поставяне в опашка.
-## API скица
+# knowledge-service
+
+> Documents in, grounded answers out: library, parsing, chunking, embeddings, namespaced
+> vector search, RAG facts, projects, and the file-sync engines.
+
+**Status:** 📋 planned · **Port (dev):** 8040 · **Database:** `knowledge` (with pgvector)
+
+## Responsibilities
+
+- Document library: categories, file upload (PDF/DOCX/XLSX), bulk upload.
+- Parsing → chunking → embedding (via model-gateway) → pgvector index per **namespace**.
+- `POST /search`: namespace-scoped hybrid retrieval (vector + keyword) — the backend of the
+  `knowledge_search` agent tool and of manifest `data_namespaces`.
+- RAG facts: promote curated content from documents into a facts corpus.
+- Projects as retrieval scopes (active project per user, Redis).
+- Archive views: sources, stats, reindex, permissions matrix.
+- **Sync engines**: WebDAV and Google Drive folder sync — per-file transactions, 30-min
+  sweeps, wall-clock deadline + continuation re-enqueue.
+
+## API sketch
+
 `POST /files` · `GET /files` · `GET/POST /categories` · `POST /search` ·
 `POST /facts/promote` · `GET/POST /projects` · `GET/POST /sync/folders` · `POST /sync/run`
-## Притежавани данни
-`doc_categories`, `doc_files`, `document_chunks` (pgвектор), `rag_facts`, `projects`,
-`sync_folders`, `sync_state`. Оригинали в S3/MinIO.
-## Зависимости
-| Посока | Какво |
-|---|---|
-| Обаден от | агент-услуга (търсене/извличане), шлюз (потребителски интерфейс на библиотека) |
-| Обаждания | модел-шлюз (вграждания), услуга за интеграция (идентификационни данни за WebDAV/Drive + файл IO) |
-| Събития извън | `document.ingested` |
-| работни места | вграждане-документ, синхронизиране-webdav, синхронизиране-устройство, синхронизиране (30 минути), повторно индексиране |
 
-## Бележки по дизайна
-- **Коригира отворения технологичен дълг на монолита по дизайн**: Синхронизирането на устройство използва ангажименти за всеки файл
-  (корекцията WebDAV на monolith, прилагана универсално) — без закрепване на ключалки за дълги транзакции.
-- Пространствата от имена са договорът с манифестите на агента; дръжте ги евтини за създаване.
-- Векторното хранилище е зад порт `VectorStore` — pgvector сега, може да се сменя с Qdrant
-  по-късно с един адаптер (вижте [03 §5](../../03-agent-platform.md#5-swapping-infrastructure)).
-## Контролен списък за внедряване
-- [ ] Настройка на схема + pgvector; модел на пространство от имена
-- [ ] Качване → разбор (pdf/docx/xlsx) → парче → вграждане на конвейер (arq)
-- [ ] `POST /search` с разклоняване на пространството от имена + сливане на точки
-- [ ] `document.ingested` събитие
-- [ ] Механизъм за синхронизиране на WebDAV (txn за всеки файл, краен срок + продължение)
-- [ ] Механизъм за синхронизиране на устройството (същият модел, чрез IO за интегрирана услуга)
-- [ ] Задания за почистване + ключове за дедупиране на единични елементи
-- [ ] Популяризиране на факти + проекти + проверки на разрешения за архив
-## Препратки
-- [01 — ключов поток 3 (диаграма на приемане)](../../01-architecture-overview.md)
-- [02 — запис в каталога на услугите](../../02-service-catalog.md#knowledge-service-8040)
-- [07 §5.5 — графика на зависимости](../../07-dependency-graphs.md#55-knowledge-service)
+## Data owned
+
+`doc_categories`, `doc_files`, `document_chunks` (pgvector), `rag_facts`, `projects`,
+`sync_folders`, `sync_state`. Originals in S3/MinIO.
+
+## Dependencies
+
+| Direction | What |
+|---|---|
+| Called by | agent-service (search/retrieve), gateway (library UI) |
+| Calls | model-gateway (embeddings), integration-service (WebDAV/Drive credentials + file IO) |
+| Events out | `document.ingested` |
+| Jobs | embed-document, sync-webdav, sync-drive, sync sweeps (30 min), reindex |
+
+## Design notes
+
+- **Fixes the monolith's open tech-debt item by design**: Drive sync uses per-file commits
+  (the monolith's WebDAV fix, applied universally) — no long transactions pinning locks.
+- Namespaces are the contract with agent manifests; keep them cheap to create.
+- The vector store is behind a `VectorStore` port — pgvector now, swappable to Qdrant
+  later with one adapter (see [03 §5](../../03-agent-platform.md#5-swapping-infrastructure)).
+
+## Implementation checklist
+
+- [ ] Schema + pgvector setup; namespace model
+- [ ] Upload → parse (pdf/docx/xlsx) → chunk → embed pipeline (arq)
+- [ ] `POST /search` with namespace fan-out + score merge
+- [ ] `document.ingested` event
+- [ ] WebDAV sync engine (per-file txn, deadline + continuation)
+- [ ] Drive sync engine (same pattern, via integration-service IO)
+- [ ] Sweep jobs + singleton dedupe keys
+- [ ] Facts promotion + projects + archive permission checks
+
+## References
+
+- [01 — key flow 3 (ingestion diagram)](../../01-architecture-overview.md)
+- [02 — service catalog entry](../../02-service-catalog.md#knowledge-service-8040)
+- [07 §5.5 — dependency graph](../../07-dependency-graphs.md#55-knowledge-service)

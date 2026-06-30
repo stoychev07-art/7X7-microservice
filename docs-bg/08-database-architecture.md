@@ -1,22 +1,23 @@
-# 08 — Архитектура на базите данни
+# 08 — Database Architecture
 
-Как се съхраняват данните в платформата: моделът **database-per-service**, какво притежава
-всяка база, и — най-важното — как бази, които **никога не могат да споделят таблица или
-join**, все пак се реферират логически една към друга чрез HTTP, events и denormalized snapshots.
+How data is stored across the platform: the **database-per-service** model, what each
+database owns, and — most importantly — how databases that may **never share a table or a
+join** still reference each other through *logical* links resolved over HTTP, events, and
+denormalized snapshots.
 
-> **Бележка за статуса.** Всички услуги са 📋 planned. Инвентарите на таблици по-долу са взети
-> от секцията *Data owned* на всяка услуга (виж [02 — service catalog](./02-service-catalog.md)
-> и per-service READMEs под [services/](./services/README.md)); column-level детайлите са
-> **intended/target** schema и са ориентировъчни, докато Alembic baselines не land-нат.
+> **Status note.** All services are 📋 planned. The table inventories below are taken from
+> each service's *Data owned* section (see [02 — service catalog](./02-service-catalog.md)
+> and the per-service READMEs under [services/](./services/README.md)); column-level
+> details are the **intended/target** schema and are indicative until the Alembic
+> baselines land.
 
 ---
+## 1. The one rule: database per service
 
-## 1. Единственото правило: database per service
-
-Всяка услуга притежава точно една PostgreSQL база. Никоя услуга не се свързва към база на
-друга услуга — няма **cross-database foreign keys и няма cross-database joins**. Единственият
-начин да се четат данни на друга услуга е през публичното ѝ API (sync HTTP със service token)
-или чрез реакция на нейните events.
+Every service owns exactly one PostgreSQL database. No service connects to another
+service's database — there are **no cross-database foreign keys and no cross-database
+joins**. The only way to read another service's data is through its public API (sync HTTP
+with a service token) or by reacting to its events.
 
 ```mermaid
 flowchart TB
@@ -74,39 +75,35 @@ flowchart TB
     plat --> rd
 ```
 
-### Защо
+### Why
+- **Independent deployability & blast radius** — a schema migration or an outage in one
+  database cannot corrupt or block another service.
+- **Clear ownership** — one writer per table; everyone else reads through the API.
+- **Polyglot persistence where it pays** — `knowledge` runs the `pgvector` extension and
+  `agent` hosts LangGraph's checkpoint tables; the rest stay plain relational.
 
-- **Independent deployability & blast radius** — schema migration или outage в една
-  база не може да corrupt-не или блокира друга услуга.
-- **Clear ownership** — един writer на table; всички други четат през API.
-- **Polyglot persistence where it pays** — `knowledge` пуска extension-а `pgvector`, а
-  `agent` host-ва LangGraph checkpoint tables; останалите остават plain relational.
-
-### Цената (и как я плащаме)
-
-- Няма DB-level referential integrity между услуги → integrity се enforce-ва от owning
-  service и от **idempotent, eventually-consistent** event consumers.
-- Няма joins между услуги → или викате API-то на owner-а, или държите **denormalized
-  snapshot** на малкото полета, които ви трябват (виж invoices ↔ counterparties по-долу).
+### The cost (and how we pay it)
+- No DB-level referential integrity across services → integrity is enforced by the owning
+  service and by **idempotent, eventually-consistent** event consumers.
+- No joins across services → you either call the owner's API or keep a **denormalized
+  snapshot** of the few fields you need (see invoices ↔ counterparties below).
 
 ---
-
 ## 2. Cross-cutting conventions
 
-Тези правила важат за всяка база, освен ако не е отбелязано друго.
+These hold for every database unless noted.
 
 | Convention | Detail |
 |---|---|
-| **Tenant scoping** | Почти всяка business table носи `company_id` (tenant-а). Това е *logical* reference към `identity.companies.id` — никога SQL FK. Postgres **Row-Level Security (RLS)** policies enforce-ват tenant isolation (посочено в registry/agent checklists). |
-| **User reference** | User-owned rows носят `user_id`, logical reference към `identity.users.id`. |
-| **Primary keys** | UUIDs (безопасни за mint-ване client-side, без cross-service sequence coupling). Изключението е **legal invoice numbering**, което използва per-tenant sequence rows за gap-free numbers. |
-| **Encryption at rest (field level)** | Secrets са AES-256-GCM encrypted in-column: `identity` external tokens, `modelgw.providers` credentials, `integration.credentials`. |
-| **Migrations** | Alembic per service; всяка услуга има собствена migration history. |
-| **Idempotency** | Event-fed tables dedupe-ват по event/idempotency key (`billing.usage_ledger` по event ID, `billing.stripe_events` по Stripe event ID, notifications по payload dedupe key). |
-| **Object storage** | Големи binaries никога не живеят в Postgres — originals и generated artifacts отиват в S3/MinIO; базата пази само keys/metadata. |
+| **Tenant scoping** | Almost every business table carries a `company_id` (the tenant). This is a *logical* reference to `identity.companies.id` — never a SQL FK. Postgres **Row-Level Security (RLS)** policies enforce tenant isolation (called out in the registry/agent checklists). |
+| **User reference** | User-owned rows carry `user_id`, a logical reference to `identity.users.id`. |
+| **Primary keys** | UUIDs (safe to mint client-side, no cross-service sequence coupling). The exception is **legal invoice numbering**, which uses per-tenant sequence rows for gap-free numbers. |
+| **Encryption at rest (field level)** | Secrets are AES-256-GCM encrypted in-column: `identity` external tokens, `modelgw.providers` credentials, `integration.credentials`. |
+| **Migrations** | Alembic per service; each service has its own migration history. |
+| **Idempotency** | Event-fed tables dedupe on an event/idempotency key (`billing.usage_ledger` by event ID, `billing.stripe_events` by Stripe event ID, notifications by payload dedupe key). |
+| **Object storage** | Large binaries never live in Postgres — originals and generated artifacts go to S3/MinIO; the database stores keys/metadata only. |
 
 ---
-
 ## 3. Database catalog
 
 | Database | Owning service | Port | Extensions / notable | Stores |
@@ -124,16 +121,15 @@ flowchart TB
 | — | gateway | 8000 | **no database** | (Redis only: rate limits, JWKS cache) |
 
 ---
-
 ## 4. Per-database schemas
 
-Всяка диаграма показва **intra-database** relationships (реални FKs вътре в тази DB). Columns
-със suffix `_ref` или анотирани *"logical → …"* са cross-service references, които **не са**
-SQL foreign keys (resolve-ват се според §5).
+Each diagram shows the **intra-database** relationships (real FKs inside that DB). Columns
+suffixed with `_ref` or annotated *"logical → …"* are cross-service references that are
+**not** SQL foreign keys (resolved per §5).
 
 ### 4.1 `identity` — users, tenants, trust
 
-Source of truth, към който в крайна сметка сочи `company_id` / `user_id` на всяка друга база.
+Source of truth that every other database's `company_id` / `user_id` ultimately points at.
 
 ```mermaid
 erDiagram
@@ -184,8 +180,8 @@ erDiagram
     }
 ```
 
-`user_companies` е membership/role join-ът, който захранва `X-Roles` header-а и цялата
-tenant authorization (виж [01 §6](./01-architecture-overview.md#6-identity-tenancy-and-authorization)).
+`user_companies` is the membership/role join that powers the `X-Roles` header and all
+tenant authorization (see [01 §6](./01-architecture-overview.md#6-identity-tenancy-and-authorization)).
 
 ### 4.2 `agent` — conversations & agent runtime
 
@@ -237,8 +233,9 @@ erDiagram
     }
 ```
 
-Плюс **LangGraph checkpoint tables** (managed by the Postgres checkpointer), keyed by thread id,
-aligned with `sessions` — те пазят interrupt/resume state за write-approval pauses.
+Plus **LangGraph checkpoint tables** (managed by the Postgres checkpointer) keyed by a
+thread id aligned with `sessions` — these store interrupt/resume state for write-approval
+pauses.
 
 ### 4.3 `modelgw` — provider registry
 
@@ -316,7 +313,7 @@ erDiagram
     }
 ```
 
-Active project per user се кешира в **Redis**, не се пази тук.
+The active project per user is cached in **Redis**, not stored here.
 
 ### 4.5 `registry` — dynamic tables
 
@@ -375,8 +372,8 @@ erDiagram
     }
 ```
 
-**Canonical column roles** са semantic glue, което позволява на други услуги (и agents)
-да намерят например counterparty по `client_name`/`eik` през различно именувани tenant tables.
+**Canonical column roles** are the semantic glue that lets other services (and agents)
+find e.g. a counterparty by `client_name`/`eik` across differently-named tenant tables.
 
 ### 4.6 `document` — templates, price list, margins
 
@@ -491,8 +488,8 @@ erDiagram
     }
 ```
 
-`usage_ledger` е **append-only** и keyed by `token.usage` event ID, така че at-least-once
-delivery никога не double-bill-ва.
+`usage_ledger` is **append-only** and keyed by the `token.usage` event ID so at-least-once
+delivery never double-bills.
 
 ### 4.8 `integration` — connections & credential vault
 
@@ -526,7 +523,7 @@ erDiagram
     }
 ```
 
-`connections` rows са target-ът на `knowledge.sync_folders.connection_ref`.
+`connections` rows are the target of `knowledge.sync_folders.connection_ref`.
 
 ### 4.9 `platform` — notifications, support, audit, settings
 
@@ -578,8 +575,8 @@ erDiagram
     }
 ```
 
-`audit_log` е **central sink** — всяка услуга пише тук индиректно чрез publish на
-`audit.event`; rows reference-ват users/companies/actions през всички услуги логически.
+`audit_log` is the **central sink** — every service writes here indirectly by publishing
+`audit.event`; rows reference users/companies/actions across all services logically.
 
 ### 4.10 `business` — invoicing, inventory, spendings
 
@@ -655,26 +652,25 @@ erDiagram
     }
 ```
 
-`invoices.counterparty_snapshot` е ключовата denormalization: legal document не трябва да
-се променя, когато registry row на counterparty бъде редактиран по-късно.
+`invoices.counterparty_snapshot` is the key denormalization: a legal document must not
+change when the counterparty's registry row is later edited.
 
 ---
-
 ## 5. Connections between databases
 
-Тъй като няма cross-database FKs, всяка inter-database "connection" е **logical reference**,
-resolve-ван runtime чрез един от три механизма:
+Because there are no cross-database FKs, every inter-database "connection" is a **logical
+reference** resolved at runtime by one of three mechanisms:
 
 | Mechanism | When used | Consistency | Example |
 |---|---|---|---|
-| **Sync HTTP** (service token) | Трябват fresh data сега | Strong (read-through) | business → registry counterparty lookup; business → document price reads |
-| **Event (Redis Streams)** | Реакция на fact; decouple producers | Eventual, at-least-once | `tenant.created` → registry seeds + billing bonus; `token.usage` → billing ledger |
-| **Denormalized snapshot** | Value трябва да е frozen / hot path | Point-in-time copy | invoice counterparty snapshot; `X-Roles` claims copied into the JWT |
+| **Sync HTTP** (service token) | Need fresh data right now | Strong (read-through) | business → registry counterparty lookup; business → document price reads |
+| **Event (Redis Streams)** | React to a fact; decouple producers | Eventual, at-least-once | `tenant.created` → registry seeds + billing bonus; `token.usage` → billing ledger |
+| **Denormalized snapshot** | Value must be frozen / hot path | Point-in-time copy | invoice counterparty snapshot; `X-Roles` claims copied into the JWT |
 
 ### 5.1 Logical reference map
 
-Solid = synchronous HTTP read; dashed = event-driven write/seed; всяка `company_id` /
-`user_id` column е implicit reference към `identity` (начертана като central hub).
+Solid = synchronous HTTP read; dashed = event-driven write/seed; every `company_id` /
+`user_id` column is an implicit reference to `identity` (drawn as the central hub).
 
 ```mermaid
 flowchart TB
@@ -718,9 +714,9 @@ flowchart TB
     bill -. "notification.requested" .-> plat
 ```
 
-> Gateway няма база; той inject-ва verified `X-User-Id` / `X-Company-Id` /
-> `X-Roles` headers, които позволяват на всяка услуга да *използва* `identity` references,
-> без да вика `identity` по hot path-а.
+> The gateway has no database; it injects the verified `X-User-Id` / `X-Company-Id` /
+> `X-Roles` headers that let every service *use* `identity` references without calling
+> `identity` on the hot path.
 
 ### 5.2 Notable cross-database links explained
 
@@ -740,15 +736,13 @@ flowchart TB
 | `platform.notifications` | all services | **event** `notification.requested` | central delivery |
 
 ---
-
-## 6. Shared infrastructure (не per-service databases)
+## 6. Shared infrastructure (not per-service databases)
 
 ### 6.1 Redis 7
+One logical Redis, used by many services but with **non-overlapping key namespaces** — it
+is infrastructure, not a shared database.
 
-Един logical Redis, използван от много услуги, но с **non-overlapping key namespaces** — това
-е infrastructure, не shared database.
-
-| User | Какво пази в Redis |
+| User | What it stores in Redis |
 |---|---|
 | gateway | rate-limit buckets, JWKS cache |
 | identity | token-cleanup queue |
@@ -763,13 +757,12 @@ flowchart TB
 | platform | email send queue |
 | *all* | **event bus** (Redis Streams topics + consumer groups) |
 
-Durability: AOF persistence (+ replica в production); billing-critical events също използват
-**transactional outbox** в producing service, така че Redis outage ги забавя, но никога не ги
-губи (виж [01 §7](./01-architecture-overview.md#7-asynchronous-work-and-events)).
+Durability: AOF persistence (+ a replica in production); billing-critical events also use a
+**transactional outbox** in the producing service so a Redis outage delays but never loses
+them (see [01 §7](./01-architecture-overview.md#7-asynchronous-work-and-events)).
 
 ### 6.2 S3 / MinIO
-
-Binary blobs, които никога не принадлежат в Postgres:
+Binary blobs that never belong in Postgres:
 
 | Owner | Objects | DB pointer |
 |---|---|---|
@@ -778,8 +771,7 @@ Binary blobs, които никога не принадлежат в Postgres:
 | document-service | generated PDFs/XLSX/DOCX artifacts | returned as signed URLs |
 
 ---
-
-## 7. Вижте също
+## 7. See also
 
 - [01 §6 — Identity, tenancy, authorization](./01-architecture-overview.md#6-identity-tenancy-and-authorization)
 - [01 §7 — Asynchronous work and events](./01-architecture-overview.md#7-asynchronous-work-and-events)

@@ -1,7 +1,7 @@
 # x7-common — the shared kernel
 
 > One small, dependency-light package (`libs/common`, import name `x7_common`) installed
-> by every service. It owns the boring-but-critical plumbing so that all 11 services boot,
+> by every service. It owns the boring-but-critical plumbing so that all 13 services boot,
 > log, authenticate, call each other, and publish events the exact same way.
 
 **Status:** 📋 planned · **Location:** `libs/common` · **Distribution:** `x7-common` ·
@@ -28,7 +28,7 @@ libs/common/
 ├── x7_common/
 │   ├── __init__.py
 │   ├── config.py          # CommonSettings — base for every service's Settings
-│   ├── auth.py            # AuthContext from gateway headers · service tokens · require_role
+│   ├── auth.py            # AuthContext from gateway headers · service tokens · require_role/require_permission · role→permission resolver
 │   ├── http.py            # process-wide pooled httpx.AsyncClient
 │   ├── middleware.py      # RequestIdMiddleware (read/generate/echo X-Request-Id)
 │   ├── logging.py         # structlog JSON setup, request_id/tenant contextvars
@@ -103,22 +103,42 @@ the call came from inside the platform.
 class AuthContext:
     user_id: str
     company_id: str          # the active tenant
-    roles: list[str]         # roles within that company
+    roles: list[str]         # role(s) within that company (system or custom)
     is_platform_admin: bool
     request_id: str
+
+    def permissions(self) -> frozenset[str]: ...
+        # resolves roles → permission set via the cached role→permission map
+        # (RolePermissionResolver below)
 
 def auth_context(request: Request) -> AuthContext: ...
     # FastAPI dependency — reads X-User-Id / X-Company-Id / X-Roles / X-Request-Id;
     # 401 if missing (a request that bypassed the gateway)
 
 def require_role(*allowed: str) -> Depends: ...
-    # require_role("owner", "co-owner") — 403 below threshold; 404 for
-    # platform-admin-only routes (ADR-015 behavior)
+    # coarse system-role check — require_role("owner", "co-owner");
+    # 403 below threshold; 404 for platform-admin-only routes (ADR-015 behavior)
+
+def require_permission(*needed: str) -> Depends: ...
+    # fine-grained authorization — require_permission("invoice.approve");
+    # resolves the caller's role(s) to permissions and 403s if any are missing.
+    # This is the preferred check: services assert permissions, never role names,
+    # so tenant-defined custom roles work without code changes (see 01 §6).
 
 def require_service_token(audience: str) -> Depends: ...
     # verifies X-Service-Token minted by identity-service (iss/aud/exp);
     # applied to /internal/* routes
 ```
+
+**Role → permission resolution.** Authorization in this platform is permission-based
+([01 §6](../../01-architecture-overview.md#authorization-model--roles--permissions-rbac)):
+roles (system *and* tenant-defined custom roles) are bundles of catalog permissions. The
+header only carries the role; `x7-common` ships a `RolePermissionResolver` that pulls the
+role→permission map from identity-service (`GET /internal/role-permissions`) and caches it
+with a short TTL (background refresh, same pattern as the JWKS cache) — so `require_permission`
+stays **off the per-request path** to identity-service. The catalog itself (the set of
+permission keys) lives in identity-service; `x7-common` only transports and caches the map,
+holding **no business policy** of its own.
 
 Service-token mechanics — designed to keep identity-service **off the per-request path**:
 the client helper mints a token once and caches it until shortly before `exp`, refreshing
@@ -181,7 +201,7 @@ is a deliberate act: it becomes a frozen contract.
 ### `errors.py` + `pagination.py` — API consistency
 
 - One error envelope (`{"error": {"code", "message", "request_id"}}`) and shared exception
-  handlers, so all 11 services fail identically and the frontend handles one shape.
+  handlers, so all 13 services fail identically and the frontend handles one shape.
 - Cursor pagination params/response used by every list endpoint.
 
 ### `testing/` — fixtures every service reuses
@@ -229,7 +249,7 @@ CI runs the common test suite before any service suite.
 - [ ] Package scaffold + pyproject + uv workspace wiring
 - [ ] `CommonSettings`, `http`, `lifespan`, `health` (smallest useful core)
 - [ ] `RequestIdMiddleware` + structlog setup + contextvars
-- [ ] `AuthContext` dependency + `require_role` + service tokens (with identity-service)
+- [ ] `AuthContext` dependency + `require_role`/`require_permission` + role→permission resolver (cached) + service tokens (with identity-service)
 - [ ] `EventBus` publish/consume + dead-letter + typed event payloads
 - [ ] Error envelope + exception handlers; pagination helpers
 - [ ] `schemas/` chat + retrieval DTOs (agent ↔ model-gateway contract first)

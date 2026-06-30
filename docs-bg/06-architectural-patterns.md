@@ -1,357 +1,349 @@
-# 06 — Обяснение на архитектурните модели
+# 06 — Architectural Patterns Explained
 
-Справочник за всеки именуван pattern, върху който стъпва архитектурата: какво представлява
-pattern-ът, къде се появява в тази система, защо е избран пред алтернативите и каква цена има.
-Прочетете това, ако термин от другите документи ("port", "strangler", "thin event", …) е
-непознат или ако искате reasoning-а зад дадено design rule.
+A reference for every named pattern the architecture relies on: what the pattern is, where
+it shows up in this system, why it was chosen over the alternatives, and what it costs.
+Read this if a term in the other documents ("port", "strangler", "thin event", …) is
+unfamiliar or you want the reasoning behind a design rule.
 
 ---
+## 1. Structural patterns (system shape)
 
-## 1. Структурни patterns (форма на системата)
+### 1.1 Microservices with bounded contexts (DDD)
 
-### 1.1 Microservices с bounded contexts (DDD)
+**What it is.** The system is decomposed into independently deployable services, each
+aligned with a *bounded context* from Domain-Driven Design — a business area with its own
+vocabulary, model, and invariants (identity, billing, knowledge, registries, …).
 
-**Какво представлява.** Системата е разложена на независимо deploy-ваеми услуги, всяка
-подравнена с *bounded context* от Domain-Driven Design — бизнес област със собствен
-речник, модел и invariants (identity, billing, knowledge, registries, …).
-
-**Къде.** 10-те услуги (11 с post-parity business-service) в
-[02-service-catalog.md](./02-service-catalog.md). Границите не са измислени от нулата:
-те следват module clusters с най-висока cohesion, които вече се виждат в монолита
-(`core/auth`, `core/registries`, `core/payments`, …), което е най-безопасният начин
-да се начертаят service lines — по граници, които domain-ът вече е доказал. Приложено е
-и обратното правило: граници, които не оправдават собствен deployable, остават модули
-(conversation history в agent-service; notifications/support/audit/settings в един
-platform-service — виж
+**Where.** The 10 services (11 with the post-parity business-service) in
+[02-service-catalog.md](./02-service-catalog.md). The boundaries were not invented from
+scratch: they follow the highest-cohesion module clusters already visible in the monolith
+(`core/auth`, `core/registries`, `core/payments`, …), which is the safest way to draw
+service lines — along seams the domain has already proven. The inverse rule also applied:
+boundaries that don't pay for their own deployable stay modules (conversation history in
+agent-service; notifications/support/audit/settings in one platform-service — see
 [02 § Deliberately merged](./02-service-catalog.md#deliberately-merged-boundaries)).
 
-**Защо.** Независимо мащабиране на hot paths (chat срещу CRUD срещу PDF rendering),
-failure isolation и възможност agent platform да се развива агресивно, без да destabilize-ва
-billing или auth.
+**Why.** Independent scaling of hot paths (chat vs. CRUD vs. PDF rendering), failure
+isolation, and the ability to evolve the agent platform aggressively without destabilizing
+billing or auth.
 
-**Компромис.** Distributed-systems complexity: network failures между услуги, повече
-deployment units, cross-service debugging. Затова архитектурата комбинира pattern-а с две
-mitigations: строга call-matrix (само agent-service fan-out-ва) и правилото
-*"boundaries are code boundaries first, deployment boundaries second"* — услугите могат да бъдат
-co-deploy-вани в един container, докато load не наложи разделяне.
+**Trade-off.** Distributed-systems complexity: network failures between services, more
+deployment units, cross-service debugging. This is why the architecture pairs the pattern
+with two mitigations: a strict call-matrix (only agent-service fans out) and the rule
+*"boundaries are code boundaries first, deployment boundaries second"* — services may be
+co-deployed in one container until load forces a split.
 
 ### 1.2 API Gateway
 
-**Какво представлява.** Една edge услуга, през която влиза целият външен traffic. Тя притежава
-cross-cutting concerns (authentication, rate limiting, routing, streaming passthrough) и
-съдържа нула business logic.
+**What it is.** A single edge service through which all external traffic enters. It owns
+cross-cutting concerns (authentication, rate limiting, routing, streaming passthrough) and
+contains zero business logic.
 
-**Къде.** Услугата `gateway` ([01 §5](./01-architecture-overview.md#5-the-api-gateway)).
+**Where.** The `gateway` service ([01 §5](./01-architecture-overview.md#5-the-api-gateway)).
 
-**Защо.** Три причини, специфични за тази система: (a) множество текущи и бъдещи frontends
-(web, mobile, Telegram/Viber) трябва да удрят идентични APIs с идентична security; (b) урокът
-от монолита — неговото route-mount *ordering* в `server.js` беше критично, а rate limiter-ът му
-беше дублиран 14 пъти — аргументира точно едно място за edge policy; (c) по време на
-миграцията routing table на gateway-а *е* strangler механизмът (§4.1).
+**Why.** Three reasons specific to this system: (a) multiple current and future frontends
+(web, mobile, Telegram/Viber) must hit identical APIs with identical security; (b) the
+monolith's lesson — its route-mount *ordering* in `server.js` was load-bearing and its rate
+limiter was duplicated 14 times — argues for exactly one place where edge policy lives;
+(c) during migration the gateway's routing table *is* the strangler mechanism (§4.1).
 
-**Компромис.** Gateway е single point of failure и потенциален bottleneck — трябва да остане
-thin (без aggregation, без transformation) и да е първото нещо, което се replicate-ва.
+**Trade-off.** The gateway is a single point of failure and a potential bottleneck — it
+must stay thin (no aggregation, no transformation) and be the first thing replicated.
 
 ### 1.3 Database-per-Service
 
-**Какво представлява.** Всяка услуга притежава своето data store изключително. Никоя друга
-услуга не може да се свързва към него; cross-service data минава през HTTP APIs или events.
+**What it is.** Each service owns its data store exclusively. No other service may connect
+to it; cross-service data moves over HTTP APIs or events.
 
-**Къде.** Всяка DB-owning услуга има собствена logical PostgreSQL база
-(`identity`, `registry`, `knowledge`, …). Vector store-ът (pgvector) принадлежи само на
-knowledge-service; agents го query-ват единствено през `/search` API.
+**Where.** Every DB-owning service has its own logical PostgreSQL database
+(`identity`, `registry`, `knowledge`, …). The vector store (pgvector) belongs to
+knowledge-service alone; agents query it only through the `/search` API.
 
-**Защо.** Единната schema на монолита с ~80 `core.*` таблици позволяваше всеки модул да
-join-ва всяка таблица — invisible coupling, което превръщаше всяка промяна в platform-wide
-risk. Private databases правят всяка dependency explicit, versionable contract и позволяват
-на всяка услуга да избере правилната storage shape (JSONB rows за registries, vectors за knowledge).
+**Why.** The monolith's single schema with ~80 `core.*` tables let any module join any
+table — invisible coupling that made every change a platform-wide risk. Private databases
+make every dependency an explicit, versionable contract, and let each service pick the
+right storage shape (JSONB rows for registries, vectors for knowledge).
 
-**Компромис.** Няма cross-service joins и няма cross-service transactions. Aggregations се
-местят в owning service (dashboard briefing живее в registry-service); consistency между
-услуги става *eventual* и се обработва с idempotent event consumers (§3.2).
+**Trade-off.** No cross-service joins and no cross-service transactions. Aggregations move
+into the owning service (dashboard briefing lives in registry-service); consistency across
+services becomes *eventual* and is handled with idempotent event consumers (§3.2).
 
-### 1.4 Multi-tenancy с defense-in-depth (RLS)
+### 1.4 Multi-tenancy with defense-in-depth (RLS)
 
-**Какво представлява.** Всички tenants споделят едни и същи услуги и бази; всеки row носи
-tenant ID, всяка query е tenant-scoped, а PostgreSQL Row-Level Security налага scope-а втори
-път на database layer.
+**What it is.** All tenants share the same services and databases; every row carries a
+tenant ID, every query is tenant-scoped, and PostgreSQL Row-Level Security enforces the
+scope a second time at the database layer.
 
-**Къде.** Tenant context (`X-Company-Id`) се проверява в gateway-а, propagate-ва се в
-headers и се прилага във всяка услуга. RLS policies mirror-ват съществуващия GUC подход
-на монолита (`app.current_tenant`).
+**Where.** Tenant context (`X-Company-Id`) is verified at the gateway, propagated in
+headers, and applied in every service. RLS policies mirror the monolith's existing GUC
+approach (`app.current_tenant`).
 
-**Защо.** Tenant isolation bugs са най-вредният клас bug в B2B платформа. Два независими
-слоя (application scoping + RLS) означават, че забравен `WHERE company_id = …` става query,
-която не връща нищо, не data leak.
+**Why.** Tenant isolation bugs are the most damaging class of bug in a B2B platform. Two
+independent layers (application scoping + RLS) mean a forgotten `WHERE company_id = …`
+becomes a query returning nothing, not a data leak.
 
-**Компромис.** RLS добавя friction към migrations и debugging (sessions трябва да set-ват GUC),
-и леко усложнява admin cross-tenant reads (explicit bypass role, audited).
+**Trade-off.** RLS adds friction to migrations and debugging (sessions must set the GUC),
+and slightly complicates admin cross-tenant reads (explicit bypass role, audited).
 
 ---
-
-## 2. Patterns вътре във всяка услуга
+## 2. Patterns inside each service
 
 ### 2.1 Hexagonal architecture (Ports & Adapters)
 
-**Какво представлява.** Domain core зависи само от **ports** — interfaces (Python
-`Protocol`s), описващи от какво има нужда domain-ът (`LLM`, `Retriever`, `ConversationStore`,
-`VectorStore`). **Adapters** implement-ват тези ports и са единствените модули, на които е
-позволено да import-ват driver, SDK или да знаят URL. Dependencies винаги сочат навътре:
-edge → domain ← adapters.
+**What it is.** The domain core depends only on **ports** — interfaces (Python
+`Protocol`s) describing what the domain needs (`LLM`, `Retriever`, `ConversationStore`,
+`VectorStore`). **Adapters** implement those ports and are the only modules allowed to
+import a driver, SDK, or know a URL. Dependencies always point inward: edge → domain ←
+adapters.
 
-**Къде.** Стандартният service layout в [02](./02-service-catalog.md) (`routes/ →
-services/ → ports/ ← adapters/`) и swap recipes в
+**Where.** The standard service layout in [02](./02-service-catalog.md) (`routes/ →
+services/ → ports/ ← adapters/`) and the swap recipes in
 [03 §5](./03-agent-platform.md#5-swapping-infrastructure).
 
-**Защо.** Прави скъпите неща евтини: смяна на vector store, пренасочване на tool adapter
-от монолита към нова услуга по време на миграцията или замяна на LLM provider е *един нов
-adapter + един wiring line* — domain-ът и всеки agent остават untouched. Освен това прави
-domain logic тестируема с in-memory fakes вместо mocked HTTP.
+**Why.** It makes the expensive things cheap: swapping the vector store, repointing a tool
+adapter from the monolith to a new service during migration, or replacing an LLM provider
+is *one new adapter + one wiring line* — the domain and every agent stay untouched. It also
+makes domain logic testable with in-memory fakes instead of mocked HTTP.
 
-**Компромис.** Повече файлове и ниво на indirection, което изглежда като ceremony в малки
-услуги. Дисциплината се отплаща само ако се enforce-ва — затова driver import извън
-`adapters/` fail-ва code review.
+**Trade-off.** More files and a level of indirection that feels like ceremony in tiny
+services. The discipline pays off only if it's enforced — hence the rule that a driver
+import outside `adapters/` fails code review.
 
 ### 2.2 Repository pattern + DTO/model separation
 
-**Какво представлява.** Database access е encapsulated в repository classes зад ports, а
-shapes, които пресичат API-то (`Pydantic` DTOs), са умишлено различни от storage shapes.
+**What it is.** Database access is encapsulated in repository classes behind ports, and the
+shapes that cross the API (`Pydantic` DTOs) are deliberately distinct from storage shapes.
 
-**Къде.** `adapters/` layer-ът на всяка DB-owning услуга; правилото "DTOs ≠ DB models" в
+**Where.** Every DB-owning service's `adapters/` layer; the rule "DTOs ≠ DB models" in
 [03 §5](./03-agent-platform.md#case-b--swap-a-database-in-a-db-owning-service).
 
-**Защо.** API contract може да остане стабилен, докато storage се развива (добавяне на
-columns, промяна на indexes, дори смяна на engines). Монолитът вече използваше repositories
-(35 от тях) — това пренася навика и формализира DTO boundary, която му липсваше.
+**Why.** The API contract can stay stable while storage evolves (add columns, change
+indexes, even change engines). The monolith already used repositories (35 of them) — this
+carries the habit over and formalizes the DTO boundary it lacked.
 
-**Компромис.** Mapping code. Държи се поносимо чрез `model_validate` на Pydantic и като не
-се измислят DTOs там, където storage shape наистина е contract-ът.
+**Trade-off.** Mapping code. Kept tolerable by Pydantic's `model_validate` and by not
+inventing DTOs where the storage shape genuinely is the contract.
 
-### 2.3 Dependency injection с composition root
+### 2.3 Dependency injection with a composition root
 
-**Какво представлява.** Objects не създават собствените си dependencies; всичко се wiring-ва
-на едно място — `deps.py` — чрез dependency system на FastAPI. Този файл е *composition root*:
-единственото място, където adapters се instantiate-ват и bind-ват към ports.
+**What it is.** Objects don't construct their own dependencies; everything is wired in one
+place — `deps.py` — using FastAPI's dependency system. That file is the *composition root*:
+the only place adapters are instantiated and bound to ports.
 
-**Къде.** Всяка услуга; всички "swap infrastructure" recipes завършват с "rewire one line of
+**Where.** Every service; all "swap infrastructure" recipes end with "rewire one line of
 `deps.py`".
 
-**Защо.** Swappability (§2.1) е реална само ако има точно една wiring point. Освен това
-дава на tests една ясна точка за override (inject fakes), без monkeypatching.
+**Why.** Swappability (§2.1) is only real if there is exactly one wiring point. It also
+gives tests a single seam to override (inject fakes) without monkeypatching.
 
-**Компромис.** Indirection — за да намерите *кой* concrete class обслужва даден port, гледате
-`deps.py`, не call site-а. Това е целта, но изненадва newcomers.
+**Trade-off.** Indirection — to find *which* concrete class serves a port you look at
+`deps.py`, not the call site. That is the point, but it surprises newcomers.
 
 ---
-
 ## 3. Communication patterns
 
-### 3.1 Synchronous request/response с context propagation
+### 3.1 Synchronous request/response with context propagation
 
-**Какво представлява.** Service-to-service calls са обикновен HTTP (httpx, pooled,
-internal network), които носят verified identity headers (`X-User-Id`, `X-Company-Id`,
-`X-Roles`, `X-Request-Id`) плюс краткоживеещ **service token** — client-credentials style
-доказателство, че caller-ът е platform service, не просто нещо в network-а.
+**What it is.** Service-to-service calls are plain HTTP (httpx, pooled, internal network)
+carrying verified identity headers (`X-User-Id`, `X-Company-Id`, `X-Roles`,
+`X-Request-Id`) plus a short-lived **service token** — a client-credentials style proof
+that the caller is a platform service, not just something on the network.
 
-**Къде.** Всички стрелки в call matrix ([02](./02-service-catalog.md)); правилата за header
-injection в [01 §5](./01-architecture-overview.md#5-the-api-gateway).
+**Where.** All arrows in the call matrix ([02](./02-service-catalog.md)); header injection
+rules in [01 §5](./01-architecture-overview.md#5-the-api-gateway).
 
-**Защо.** Използва се за *queries and commands that need an answer now* (agent tools четат
-registry rows). HTTP + OpenAPI държи contracts explicit и позволява TS client да се генерира.
+**Why.** Used for *queries and commands that need an answer now* (agent tools reading
+registry rows). HTTP + OpenAPI keeps contracts explicit and the TS client generatable.
 
-**Компромис.** Latency на hop и temporal coupling (callee трябва да е up). Mitigate-ва се
-чрез shallow call graph (agent-service е единственият fan-out hub) и чрез преместване на
-всичко, което *не* изисква незабавен отговор, към events (§3.2).
+**Trade-off.** Latency per hop and temporal coupling (callee must be up). Mitigated by
+keeping the call graph shallow (agent-service is the only fan-out hub) and by moving
+everything that *doesn't* need an immediate answer to events (§3.2).
 
-### 3.2 Event-driven pub/sub с thin events и idempotent consumers
+### 3.2 Event-driven pub/sub with thin events and idempotent consumers
 
-**Какво представлява.** Услугите publish-ват *facts* (`tenant.created`, `token.usage`,
-`document.ingested`) към Redis Streams topics; consumer groups ги обработват независимо.
-Events са **thin** — IDs и минимален payload; consumers fetch-ват details през HTTP, ако трябва.
-Всеки consumer е **idempotent**, защото delivery е at-least-once.
+**What it is.** Services publish *facts* (`tenant.created`, `token.usage`,
+`document.ingested`) to Redis Streams topics; consumer groups process them independently.
+Events are **thin** — IDs and minimal payload; consumers fetch details over HTTP if needed.
+Every consumer is **idempotent** because delivery is at-least-once.
 
-**Къде.** [01 §7](./01-architecture-overview.md#7-asynchronous-work-and-events) — topic
-таблицата и fan-out диаграмата.
+**Where.** [01 §7](./01-architecture-overview.md#7-asynchronous-work-and-events) — the
+topic table and the fan-out diagram.
 
-**Защо.** Decouple-ва producers от consumers: model-gateway не знае, че billing съществува;
-registry-service seed-ва system registries при tenant creation, без identity-service да знае
-за registries. Нови consumers се attach-ват без промяна в producers — същото open/closed
-свойство, което има agent platform.
+**Why.** Decouples producers from consumers: the model-gateway doesn't know billing exists;
+registry-service seeds system registries on tenant creation without identity-service
+knowing about registries. New consumers attach without touching producers — the same
+open/closed property the agent platform has.
 
-**Компромис.** Eventual consistency (token balance изостава от LLM call-а с milliseconds до
-seconds) и оперативната нужда да се monitor-ват consumer lag и dead-letter handling. Когато
-event *не трябва* да се изгуби спрямо DB write, producing service използва outbox table,
-flush-вана от worker-а му (запис на row и pending event в една transaction). `token.usage`
-е в този клас — billing data е, затова model-gateway винаги го publish-ва през outbox-а си;
-Redis работи с AOF persistence + replica в production за всичко останало (виж
-[01 §7](./01-architecture-overview.md#7-asynchronous-work-and-events)).
+**Trade-off.** Eventual consistency (a token balance lags its LLM call by milliseconds to
+seconds) and the operational need to monitor consumer lag and dead-letter handling. Where
+an event *must not* be lost relative to a DB write, the producing service uses an outbox
+table flushed by its worker (write the row and the pending event in one transaction).
+`token.usage` is in that class — it is billing data, so the model-gateway always
+publishes it through its outbox; Redis runs with AOF persistence + a replica in
+production for everything else (see [01 §7](./01-architecture-overview.md#7-asynchronous-work-and-events)).
 
 ### 3.3 Job queue / private workers
 
-**Какво представлява.** Всяка услуга притежава arq workers, които четат собствени Redis queues
-за deferred или heavy work (embedding, file sync, email sends, retention purges). Queues са
-private — никоя услуга не enqueue-ва в чужда.
+**What it is.** Each service owns arq workers reading its own Redis queues for deferred or
+heavy work (embedding, file sync, email sends, retention purges). Queues are private —
+no service enqueues into another's.
 
-**Къде.** `workers/` папката на всяка услуга; job lists по услуги в
+**Where.** The `workers/` folder of each service; job lists per service in
 [02](./02-service-catalog.md).
 
-**Защо.** Държи request latency равна и изолира background load — монолитът научи това по
-трудния начин, когато Drive sync изтощи general worker-а му и наложи `sync-worker.js` split.
-Private queues пазят database-per-service принципа за work, не само за data.
+**Why.** Keeps request latency flat and isolates background load — the monolith learned
+this the hard way when Drive sync starved its general worker, forcing the `sync-worker.js`
+split. Private queues preserve the database-per-service principle for work, not just data.
 
-**Компромис.** Job state е още нещо за наблюдение; cross-service workflows трябва да
-комуникират през events, никога чрез reach into queue на съседна услуга.
+**Trade-off.** Job state is another thing to observe; cross-service workflows must
+communicate via events, never by reaching into a neighbor's queue.
 
 ---
-
 ## 4. Evolution & extensibility patterns
 
 ### 4.1 Strangler Fig (migration)
 
-**Какво представлява.** Вместо big-bang rewrite, facade (gateway-ът) застава пред legacy
-системата; нови услуги поемат route-by-route, докато старата система вече не обслужва нищо
-и се премахва — новата система постепенно "strangle"-ва старата.
+**What it is.** Instead of a big-bang rewrite, a facade (the gateway) sits in front of the
+legacy system; new services take over route-by-route until the old system serves nothing
+and is removed — the new system "strangles" the old one gradually.
 
-**Къде.** Целият migration plan в
+**Where.** The entire migration plan in
 [05 §5](./05-migration-pros-and-cons.md#5-risk-reducing-migration-strategy-strangler-not-big-bang):
-gateway proxy-ва всичко към монолита на ден първи, после всяка фаза flip-ва path prefixes
-към нови услуги. Agent tools първо използват adapter clients, насочени към монолита, а по-късно
-към новите услуги — config flip благодарение на ports & adapters (§2.1).
+the gateway proxies everything to the monolith on day one, then each phase flips path
+prefixes to new services. Agent tools use adapter clients pointed at the monolith first,
+new services later — a config flip thanks to ports & adapters (§2.1).
 
-**Защо.** Реални tenants използват платформата ежедневно; cutover, който може да се движи
-(и връща назад) по route и по tenant, превръща existential risk в поредица от малки рискове.
+**Why.** Real tenants use the platform daily; a cutover that can be advanced (and rolled
+back) per route and per tenant converts an existential risk into a sequence of small ones.
 
-**Компромис.** Двойна infrastructure и двойно bookkeeping за периода, плюс feature freeze
-на монолита, за да остане parity фиксирана цел.
+**Trade-off.** Double infrastructure and double bookkeeping for the duration, plus a
+feature freeze on the monolith to keep parity a fixed target.
 
 ### 4.2 Plugin architecture: convention over configuration + registry discovery
 
-**Какво представлява.** Разширяването на системата означава *добавяне на файлове по конвенция*,
-не редакция на core code. Registry открива extensions при startup чрез filesystem scanning
-(reflection), validate-ва manifest-ите им и ги mount-ва; счупено extension се skip-ва, никога
-не е fatal.
+**What it is.** Extending the system means *adding files that follow a convention*, not
+editing core code. A registry discovers extensions at startup by scanning the filesystem
+(reflection), validates their manifests, and mounts them; a broken extension is skipped,
+never fatal.
 
-**Къде.** Три места, умишлено със същата форма:
+**Where.** Three places, deliberately the same shape:
 - **Agents** — `app/agents/<id>/manifest.yaml` + optional `graph.py`
   ([03 §1](./03-agent-platform.md#1-how-extensibility-is-achieved)).
-- **Tools** — един module на tool + един registry list
+- **Tools** — one module per tool + a single registry list
   ([03 §4](./03-agent-platform.md#4-tools-the-shared-catalog)).
-- **Integration adapters** — folder + manifest + adapter class в integration-service.
+- **Integration adapters** — folder + manifest + adapter class in integration-service.
 
-**Защо.** Това е core extensibility requirement-ът на системата: agents и tools трябва да
-могат да се добавят от developer (или някой ден да се generated-ват), без platform knowledge.
-Open/closed principle, преведен в operations: open for extension, closed for modification.
+**Why.** This is the system's core extensibility requirement: agents and tools must be
+addable by a developer (or eventually, generated) without platform knowledge. The
+open/closed principle made operational: open for extension, closed for modification.
 
-**Компромис.** Indirection при startup ("откъде дойде този route?") — mitigate-нато чрез
-logging на всяко discovered/skipped extension — и нуждата manifest schema да остане стабилна,
-защото е public contract.
+**Trade-off.** Indirection at startup ("where did this route come from?") — mitigated by
+logging every discovered/skipped extension — and the need to keep the manifest schema
+stable, since it is a public contract.
 
-### 4.3 Declarative manifests (configuration като contract)
+### 4.3 Declarative manifests (configuration as contract)
 
-**Какво представлява.** *Behaviour envelope* на extension — model, allowed tools, RAG
-namespaces, channels, prompts — е data, не code. Runtime чете manifest-а и wiring-ва/ограничава
-extension-а съответно.
+**What it is.** An extension's *behaviour envelope* — model, allowed tools, RAG
+namespaces, channels, prompts — is data, not code. The runtime reads the manifest and
+wires/constrains the extension accordingly.
 
-**Къде.** Agent `manifest.yaml` ([03 §2](./03-agent-platform.md#2-anatomy-of-an-agent-folder));
-integration adapter manifests; registry templates (business-level instance на същата идея —
-registry се дефинира чрез declarative column specs с canonical roles, не чрез code).
+**Where.** Agent `manifest.yaml` ([03 §2](./03-agent-platform.md#2-anatomy-of-an-agent-folder));
+integration adapter manifests; registry templates (a business-level instance of the same
+idea — a registry is defined by declarative column specs with canonical roles, not code).
 
-**Защо.** Data може да се review-ва, diff-ва, validate-ва (Pydantic) и редактира без
-programming. Повечето behaviour changes (дайте tool на agent, сменете model-а му, scope-нете
-RAG-а му) стават едноредови YAML edits.
+**Why.** Data is reviewable, diffable, validatable (Pydantic), and editable without
+programming. Most behaviour changes (give an agent a tool, change its model, scope its
+RAG) become one-line YAML edits.
 
-**Компромис.** Manifests могат тихо да drift-нат от реалността, ако runtime не ги validate-ва
-строго — затова discovery time е parse-into-Pydantic-or-skip.
+**Trade-off.** Manifests can silently drift from reality if the runtime doesn't validate
+them strictly — hence parse-into-Pydantic-or-skip at discovery time.
 
-### 4.4 Template Method (default agent graph)
+### 4.4 Template Method (the default agent graph)
 
-**Какво представлява.** Base implementation дефинира skeleton-а на алгоритъм; specializations
-override-ват само различните стъпки. Тук: `build_default_graph()` дава целия
-load-context → ReAct loop → approval → answer pipeline, а `default_nodes()` expose-ва
-стъпките му като reusable LangGraph nodes, които custom `graph.py` може да recompose-ва.
+**What it is.** A base implementation defines the skeleton of an algorithm; specializations
+override only the steps that differ. Here: `build_default_graph()` provides the complete
+load-context → ReAct loop → approval → answer pipeline, and `default_nodes()` exposes its
+steps as reusable LangGraph nodes a custom `graph.py` can recompose.
 
-**Къде.** [03 §1 Pillar 2 and §2](./03-agent-platform.md).
+**Where.** [03 §1 Pillar 2 and §2](./03-agent-platform.md).
 
-**Защо.** Marginal cost на нов agent е само неговото *unique* behaviour — manifest-only
-agent ship-ва zero code; custom agent пише един planning node, не цял loop.
+**Why.** The marginal cost of a new agent is only its *unique* behaviour — a manifest-only
+agent ships zero code; a custom agent writes one planning node, not a whole loop.
 
-**Компромис.** Default graph е shared dependency: промени в него засягат всеки manifest-only
-agent, затова се нуждае от собствени regression tests.
+**Trade-off.** The default graph is a shared dependency: changes to it affect every
+manifest-only agent, so it needs its own regression tests.
 
 ---
-
 ## 5. Agentic patterns
 
 ### 5.1 ReAct (reason + act tool loop)
 
-**Какво представлява.** Model-ът редува reasoning и tool calls: вижда tool specs, иска call,
-runtime го изпълнява, добавя резултата към conversation-а и извиква model-а отново — докато
-model-ът отговори без да иска tools.
+**What it is.** The model alternates between reasoning and tool calls: it sees the tool
+specs, requests a call, the runtime executes it, appends the result to the conversation,
+and re-invokes the model — until the model answers without requesting tools.
 
-**Къде.** Цикълът `call_model ⇄ run_tools` в default graph
-([03 §1](./03-agent-platform.md)); iteration-capped, за да се предотвратят runaway loops.
+**Where.** The `call_model ⇄ run_tools` cycle in the default graph
+([03 §1](./03-agent-platform.md)); iteration-capped to prevent runaway loops.
 
-**Защо.** Това е най-простият agent pattern, който обработва open-ended business questions
-("draft an offer for client X") — и съвпада с това, което ръчно изграденият loop на монолита
-вече правеше, минимизирайки behavioral migration risk.
+**Why.** It is the simplest agent pattern that handles open-ended business questions
+("draft an offer for client X") — and it matches what the monolith's hand-rolled loop
+already did, minimizing behavioral migration risk.
 
-**Компромис.** Latency и token cost растат с всяка iteration; tools трябва да са проектирани
-така, че common workflows да се решават с малко calls (например upfront context loading,
-per-turn dedupe).
+**Trade-off.** Latency and token cost grow with each iteration; tools must be designed so
+common workflows resolve in few calls (e.g. upfront context loading, per-turn dedupe).
 
-### 5.2 Human-in-the-loop чрез durable interrupts
+### 5.2 Human-in-the-loop via durable interrupts
 
-**Какво представлява.** Преди всяко state-changing action graph-ът спира на checkpoint,
-persist-нат в Postgres, показва proposed action на човек и resume-ва с неговото решение —
-оцелявайки при disconnects, restarts и channel switches.
+**What it is.** Before any state-changing action, the graph pauses at a checkpoint
+persisted to Postgres, surfaces the proposed action to a human, and resumes with their
+decision — surviving disconnects, restarts, and channel switches.
 
-**Къде.** `await_approval` interrupt node и `/resume` endpoint
+**Where.** The `await_approval` interrupt node and the `/resume` endpoint
 ([01 key flow 2](./01-architecture-overview.md), [03 §1 Pillar 5](./03-agent-platform.md)).
 
-**Защо.** ERP agent, който пише registries, изпраща emails и генерира invoices, трябва да е
-*provably* неспособен да действа без consent. Монолитът implemented-ваше approval като
-in-stream pause (губи се при disconnect); checkpointed interrupts правят consent durable.
+**Why.** An ERP agent that writes registries, sends emails, and generates invoices must be
+*provably* unable to act without consent. The monolith implemented approval as an in-stream
+pause (lost on disconnect); checkpointed interrupts make consent durable.
 
-**Компромис.** Checkpoint storage и малко по-сложен client protocol (chat може да завърши с
-`approval_required`, не с `done`).
+**Trade-off.** Checkpoint storage and a slightly more complex client protocol (a chat can
+end in `approval_required` rather than `done`).
 
-### 5.3 Capability allow-listing (least privilege за agents)
+### 5.3 Capability allow-listing (least privilege for agents)
 
-**Какво представлява.** Това, че tool съществува в catalog-а, не дава нищо: manifest-ът на
-всеки agent изброява точно кои tools model-ът може да вижда и вика, а read/write classification
-се enforce-ва от runtime-а (write ⇒ interrupt), не от prompt wording.
+**What it is.** A tool existing in the catalog grants nothing: each agent's manifest
+enumerates exactly which tools the model may see and call, and read/write classification
+is enforced by the runtime (write ⇒ interrupt), not by prompt wording.
 
-**Къде.** `tools:` allow-list и `kind="read"|"write"` enforcement
+**Where.** The `tools:` allow-list and `kind="read"|"write"` enforcement
 ([03 §4](./03-agent-platform.md#4-tools-the-shared-catalog)); safety guards (host
-allow-lists, tenant scoping) живеят вътре в tools, така че никой agent не може да ги забрави.
+allow-lists, tenant scoping) live inside tools so no agent can forget them.
 
-**Защо.** Prompt-level restrictions са advisory; capability-level restrictions са structural.
-Това е security boundary на agent platform.
+**Why.** Prompt-level restrictions are advisory; capability-level restrictions are
+structural. This is the security boundary of the agent platform.
 
-**Компромис.** Добавянето на capability е умишлено two-step (catalog + manifest), което е
-леко friction — by design.
+**Trade-off.** Adding a capability is a deliberate two-step (catalog + manifest), which is
+mild friction — by design.
 
-### 5.4 Centralized model access (Model Gateway)
+### 5.4 Centralized model access (the Model Gateway)
 
-**Какво представлява.** Една услуга притежава всички LLM provider credentials и expose-ва
-uniform completion/embedding API; всеки model call в platform-ата минава през нея и emit-ва
-metering event като side effect на самия call.
+**What it is.** A single service owns all LLM provider credentials and exposes a uniform
+completion/embedding API; every model call in the platform flows through it and emits a
+metering event as a side effect of the call itself.
 
-**Къде.** model-gateway ([02](./02-service-catalog.md)); `token.usage` events се consume-ват от
+**Where.** model-gateway ([02](./02-service-catalog.md)); `token.usage` events consumed by
 billing-service.
 
-**Защо.** Три структурни печалби: provider switching е невидим за callers; AI kill switch
-и budgets действат на едно място; и **billing cannot be bypassed by a forgotten callsite** —
-монолитът metering-ваше per-callsite, което е точно как стават leaks.
+**Why.** Three structural wins: provider switching is invisible to callers; the AI kill
+switch and budgets act in one place; and **billing cannot be bypassed by a forgotten
+callsite** — the monolith metered per-callsite, which is exactly how leaks happen.
 
-**Компромис.** Extra hop по най-горещия path (mitigated чрез streaming passthrough и
-co-location), а gateway-ът става critical infrastructure — replicate-нете го рано.
+**Trade-off.** An extra hop on the hottest path (mitigated by streaming passthrough and
+co-location), and the gateway becomes critical infrastructure — replicate it early.
 
 ---
-
 ## 6. Pattern-to-document map
 
-| Pattern | Дефиниран чрез | Основен документ |
+| Pattern | Defined in | Primary doc |
 |---|---|---|
 | Microservices / bounded contexts | service boundaries | [02](./02-service-catalog.md) |
 | API Gateway | edge service | [01 §5](./01-architecture-overview.md) |

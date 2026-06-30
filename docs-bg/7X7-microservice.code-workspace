@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		},
+		{
+			"path": "../../7x7-platform"
+		},
+		{
+			"path": "../../../../Projects/mango"
+		}
+	],
+	"settings": {}
+}

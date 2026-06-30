@@ -1,26 +1,47 @@
-# Услуги — Документация за всяка услуга
-Една папка на услуга. Всеки README е началната точка за прилагане на тази услуга:отговорности, скица на API, притежавани данни, зависимости, бележки за дизайн и anконтролен списък за изпълнение. Тъй като услугите се изграждат, тези папки нарастват (API договори,runbooks, ADR).
-| Обслужване | Порт (dev) | Едноредов |
+# Services — Per-Service Documentation
+
+One folder per service. Each README is the starting point for implementing that service:
+responsibilities, API sketch, owned data, dependencies, design notes, and an
+implementation checklist. As services get built, these folders grow (API contracts,
+runbooks, ADRs).
+
+| Service | Port (dev) | One-liner |
 |---|---|---|
-| [портал](./gateway/README.md) | 8000 | Единична публична входна точка — маршрутизиране, JWT проверка, ограничаване на скоростта, SSE преминаване |
-| [услуга за самоличност](./identity-service/README.md) | 8010 | Потребители, компании, роли, JWT издаване, OAuth, JWKS, сервизни токени |
-| [агент-услуга](./agent-service/README.md) | 8020 | Изпълнение на агент LangGraph — агенти, открити в папки, каталог с инструменти, прекъсвания за одобрение, съхраняване на разговори |
-| [модел-портал](./model-gateway/README.md) | 8030 | Единственият клиент на LLM доставчик — единен API, измерване на събития, превключвател за изключване |
-| [обслужване на знания](./knowledge-service/README.md) | 8040 | Библиотека, анализиране, вграждания, векторно търсене с пространство от имена, синхронизиране на файлове |
-| [служба по вписвания](./registry-service/README.md) | 8050 | Динамични регистри, шаблони, канонични роли, клиенти, табло за управление |
-| [документ-услуга](./document-service/README.md) | 8060 | Шаблони за документи, генериране на PDF/Excel, ценова листа, маржове, KSS |
-| [услуга за таксуване](./billing-service/README.md) | 8070 | Икономия на токени, Stripe, автоматично презареждане, лимити и предупреждения |
-| [интеграция-услуга](./integration-service/README.md) | 8080 | Google, IMAP/SMTP, WebDAV адаптери + каталог + хранилище за идентификационни данни |
-| [платформа-услуга](./platform-service/README.md) | 8090 | Известия, транзакционен имейл, предупреждения за операции, билети за поддръжка, приемник за одит, настройки |
-| [бизнес-услуги](./business-service/README.md) | 8100 | Фактуриране, инвентаризация, разходи — въведени ERP домейни с твърди инварианти (след паритет) |
+| [gateway](./gateway/README.md) | 8000 | Single public entry point — routing, JWT verification, rate limiting, SSE passthrough |
+| [identity-service](./identity-service/README.md) | 8010 | Users, companies, roles, JWT issuance, OAuth, JWKS, service tokens |
+| [agent-service](./agent-service/README.md) | 8020 | LangGraph agent runtime — folder-discovered agents, tool catalog, approval interrupts, conversation store |
+| [model-gateway](./model-gateway/README.md) | 8030 | The only LLM provider client — uniform API, metering events, kill switch |
+| [knowledge-service](./knowledge-service/README.md) | 8040 | Library, parsing, embeddings, namespaced vector search, file sync |
+| [registry-service](./registry-service/README.md) | 8050 | Dynamic registries, templates, canonical roles, clients, dashboard |
+| [document-service](./document-service/README.md) | 8060 | Document templates, PDF/Excel generation, price list, margins, KSS |
+| [billing-service](./billing-service/README.md) | 8070 | Token economy, Stripe, auto-top-up, limits and alerts |
+| [integration-service](./integration-service/README.md) | 8080 | Google, IMAP/SMTP, WebDAV adapters + catalog + credentials vault |
+| [platform-service](./platform-service/README.md) | 8090 | Notifications, transactional email, ops alerts, support tickets, audit sink, settings |
+| [business-service](./business-service/README.md) | 8100 | Invoicing, inventory, spendings — typed ERP domains with hard invariants (post-parity) |
 
-Граници, които умишлено са **модули, а не услуги**: история на разговорите (вътреагент-услуга) и уведомления/поддръжка/одит/настройки (една платформа-услуга) — вижте[02 § Съзнателно обединени](../02-service-catalog.md#deliberately-merged-boundaries).
+Boundaries that are deliberately **modules, not services**: conversation history (inside
+agent-service) and notifications/support/audit/settings (one platform-service) — see
+[02 § Deliberately merged](../02-service-catalog.md#deliberately-merged-boundaries).
 
-Пълна **графика на зависимости** на всяка услуга (вътрешно наслояване + обаждащи се, извиквани, събития,инфраструктура, системи на трети страни).[07 — Графики на зависимости](../07-dependency-graphs.md), заедно с изгледите на цялата система.
-Отложено/бъдещо (няма папка, докато не бъде решено): **услуга за схеми** (електрическа схемаизвличане вертикално — виж [04 §5](../04-functional-coverage.md)), **телеграма-адаптер** /**viber-адаптер** (тънки канални клиенти на API за чат на шлюза).
-## Ред на изграждане
-Следвайте фазите на удушвача в [05 §5](../05-migration-pros-and-cons.md):
-шлюз → идентичност + модел-шлюз → агент + знание →регистър + документ → фактуриране + интеграция + платформа → бизнес-услуга(след паритет).
-## Споделени конвенции
-Всяка услуга следва стандартното оформление, наслояването и дефинираните междусекторни стандартив [02 — Каталог на услугите](../02-service-catalog.md)(шестоъгълна структура,`deps.py`
-композиционен корен, здрави/готови крайни точки, структурирани регистрационни файлове, Alembic, обхват на клиента + RLS),и инсталира [`x7-common`споделено ядро](../libs/common/README.md)за конфигурация, автводопровод, автобус за събития и видимост.
+Each service's full **dependency graph** (internal layering + callers, callees, events,
+infrastructure, third-party systems) is drawn in
+[07 — Dependency Graphs](../07-dependency-graphs.md), alongside the whole-system views.
+
+Deferred / future (no folder until decided): **schematics-service** (electrical-schematic
+extraction vertical — see [04 §5](../04-functional-coverage.md)), **telegram-adapter** /
+**viber-adapter** (thin channel clients of the gateway chat API).
+
+## Build order
+
+Follow the strangler phases in [05 §5](../05-migration-pros-and-cons.md):
+gateway → identity + model-gateway → agent + knowledge →
+registry + document → billing + integration + platform → business-service
+(after parity).
+
+## Shared conventions
+
+Every service follows the standard layout, layering, and cross-cutting standards defined
+in [02 — Service Catalog](../02-service-catalog.md) (hexagonal structure, `deps.py`
+composition root, health/ready endpoints, structured logs, Alembic, tenant scoping + RLS),
+and installs the [__CODE_1__ shared kernel](../libs/common/README.md) for config, auth
+plumbing, the event bus, and observability.

@@ -251,6 +251,20 @@ into a new namespace (`POST /api/v1/knowledge/files` with `namespace: offers-kb`
 that namespace in the manifest. Agents read at query time through the `Retriever` port —
 never the vector store directly.
 
+### The `iot` agent (`/agents/iot`)
+
+A built-in agent for the IoT vertical, added the same way (a folder + `manifest.yaml`, no core
+change). It is the diagnosis half of the **alert loop**: when
+[`iot-service`](../services/iot-service/README.md) emits `sensor.anomaly` / `device.alert`
+(after one of an organization's own alert rules breaches), the event — carrying the trusted
+`company_id` — triggers `/agents/iot` (directly, or via the n8n bridge). The agent reads device
+and time-series context from `iot-service`, retrieves similar past incidents from the
+`iot_anomalies` knowledge namespace, asks model-gateway (Claude) for a diagnosis, and routes the
+result to `platform-service` notifications. Its `data_namespaces` include `iot_anomalies`; its
+tools are read-oriented (device/series lookups) with any write/remediation tool approval-gated
+like any other. See
+[09 §3.10](../09-industry4z-platform-integration.md#310-iot-vertical--iot-service--timescaledb--node-red--decided-adopt-grafana-rejected).
+
 ---
 
 ## 4. Tools: the shared catalog
@@ -398,8 +412,9 @@ def get_turn_service() -> TurnService:
 ### Case B — swap a database in a DB-owning service
 
 Same mechanism in any sibling service: the domain depends on a repository/store port; the
-adapter is the only file importing the driver. Moving knowledge-service's vector store from
-pgvector to Qdrant = one new adapter + one `deps.py` line. Two hard rules:
+adapter is the only file importing the driver. knowledge-service's vector store sits behind
+a `VectorStore` port (Qdrant today); swapping it for another engine = one new adapter + one
+`deps.py` line. Two hard rules:
 
 - **Database-per-service.** No service ever connects to another's store.
 - **DTOs ≠ DB models.** Adapters map between API DTOs and storage shapes, so the API stays
@@ -407,8 +422,10 @@ pgvector to Qdrant = one new adapter + one `deps.py` line. Two hard rules:
 
 ### Case C — swap the LLM provider
 
-Nothing in agent-service changes at all: providers live behind the model-gateway. Add the
-provider adapter *there*, flip the model name in a manifest (or the admin provider config).
+Nothing in agent-service changes at all: providers live behind the model-gateway, which is
+backed by **LiteLLM**. Adding/switching a provider (e.g. routing to a local **Ollama** model)
+is LiteLLM config + flipping the model name in a manifest (or the admin provider config) — no
+new hand-written adapter, no agent change.
 
 ---
 

@@ -1,48 +1,63 @@
-# модел-портал
-> Единствената услуга, която говори с доставчици на LLM. Единен API за завършване/вграждане,
-> смяна на доставчик и измерване на токени като структурен страничен ефект от всяко повикване.
-**Състояние:** 📋 планирано · **Порт (dev):** 8030 · **База данни:** `modelgw`
-## Отговорности
-- `POST /v1/complete` — завършвания на чат със спецификации на инструмента, поддържа се поточно предаване.
-- `POST /v1/embed` — вграждания (първоначално OpenAI).
-- Регистър на доставчика (управляван от администратор): Anthropic (основен чат), OpenAI (вграждания);
-  идентификационни данни, криптирани AES-256-GCM. Добавяне на доставчик = един нов адаптер.
-- **Измерване на токени**: всяко повикване излъчва събитие `token.usage` с наемател/потребител/функция/агент
-  приписване (предадено като метаданни за повикване от повикващия).
-- Глобален + превключвател за изключване на AI за всеки клиент; мониторинг на баланса на доставчика (ежедневна проверка + предупреждение).
-- Повторни опити, изчакване и нормализиране на грешки на доставчика.
-## API скица
-`POST /v1/complete` (поддържа `stream=true`) · `POST /v1/embed` · `GET /v1/models` ·
-`GET/POST /v1/providers` (админ) · `POST /v1/kill-switch` (админ)
-## Притежавани данни
-`providers` (криптирани идентификационни данни), `model_configs`, състояние на превключвател за изключване.
-## Зависимости
-| Посока | Какво |
-|---|---|
-| Обаден от | услуга за агент (чат), услуга за знания (вграждания), услуга за документи (импорт/формат на AI) |
-| Обаждания | Антропен API, OpenAI API |
-| Събития извън | `token.usage` (всяко обаждане), `audit.event` |
-| работни места | проверка на баланса на доставчика (ежедневно) |
+# model-gateway
 
-## Бележки по дизайна
-- **Таксуването не може да бъде заобиколено**: измерването се извършва тук, а не на местата за повикване - структурното
-  корекция за счетоводството на monolith за всеки сайт за повикване.
-- Преминаването на поточно предаване трябва да добави почти нулево забавяне; това се намира на най-горещия път.
-- **`token.usage` трябва да преживее инфраструктурни повреди** — това са данни за фактуриране. Емисия
-  преминава през транзакционна изходяща кутия (ред за използване + чакащо събитие, ангажирано в една DB
-  транзакция, работникът се изплаква към потока), така че прекъсването на Redis може да забави измерването, но
-  никога не го губете (вижте [01 §7](../../01-architecture-overview.md#7-asynchronous-work-and-events)).
-- Обаждащите се изпращат логично име на модела; картографирането към доставчик+модел е конфигурация тук, така че a
-  превключването на доставчик е невидимо за всеки манифест на агент.
-## Контролен списък за внедряване
-- [ ] Порт на доставчик (`LLM`, `Embedder` протоколи) + адаптери Anthropic и OpenAI
-- [ ] Унифицирани DTO заявка/отговор вкл. извиквания на инструменти и блок за използване
-- [ ] SSE/поточно предаване
-- [ ] `token.usage` излъчване на събитие чрез транзакционна изходяща кутия (измерването трябва да преживее загуба на Redis)
-- [ ] CRUD регистър на доставчика (администратор) + хранилище за идентификационни данни AES-256-GCM
-- [ ] Превключвател за изключване (глобален / на наемател) се проверява при всяко повикване
-- [ ] Задача за проверка на баланса + предупреждение `notification.requested`
-## Препратки
-- [02 — запис в каталога на услугите](../../02-service-catalog.md#model-gateway-8030)
-- [06 §5.4 — централизиран достъп до модела](../../06-architectural-patterns.md)
-- [07 §5.4 — графика на зависимости](../../07-dependency-graphs.md#54-model-gateway)
+> The only service that talks to LLM providers. Uniform completion/embedding API,
+> provider switching, and token metering as a structural side effect of every call.
+
+**Status:** 📋 planned · **Port (dev):** 8030 · **Database:** `modelgw`
+
+## Responsibilities
+
+- `POST /v1/complete` — chat completions with tool specs, streaming supported.
+- `POST /v1/embed` — embeddings (OpenAI initially).
+- Provider registry (admin-managed): Anthropic (primary chat), OpenAI (embeddings);
+  credentials encrypted AES-256-GCM. Adding a provider = one new adapter.
+- **Token metering**: every call emits a `token.usage` event with tenant/user/feature/agent
+  attribution (passed as call metadata by the caller).
+- Global + per-tenant AI kill switch; provider balance monitoring (daily check + alert).
+- Retries, timeouts, and provider error normalization.
+
+## API sketch
+
+`POST /v1/complete` (supports `stream=true`) · `POST /v1/embed` · `GET /v1/models` ·
+`GET/POST /v1/providers` (admin) · `POST /v1/kill-switch` (admin)
+
+## Data owned
+
+`providers` (encrypted credentials), `model_configs`, kill-switch state.
+
+## Dependencies
+
+| Direction | What |
+|---|---|
+| Called by | agent-service (chat), knowledge-service (embeddings), document-service (AI import/format) |
+| Calls | Anthropic API, OpenAI API |
+| Events out | `token.usage` (every call), `audit.event` |
+| Jobs | provider balance check (daily) |
+
+## Design notes
+
+- **Billing cannot be bypassed**: metering happens here, not at callsites — the structural
+  fix for the monolith's per-callsite bookkeeping.
+- Streaming passthrough must add near-zero latency; this sits on the hottest path.
+- **`token.usage` must survive infrastructure failures** — it is billing data. Emission
+  goes through a transactional outbox (usage row + pending event committed in one DB
+  transaction, worker flushes to the stream), so a Redis outage can delay metering but
+  never lose it (see [01 §7](../../01-architecture-overview.md#7-asynchronous-work-and-events)).
+- Callers send a logical model name; mapping to provider+model is config here, so a
+  provider switch is invisible to every agent manifest.
+
+## Implementation checklist
+
+- [ ] Provider port (`LLM`, `Embedder` Protocols) + Anthropic and OpenAI adapters
+- [ ] Unified request/response DTOs incl. tool calls and usage block
+- [ ] SSE/streaming passthrough
+- [ ] `token.usage` event emission via transactional outbox (metering must survive Redis loss)
+- [ ] Provider registry CRUD (admin) + AES-256-GCM credential storage
+- [ ] Kill switch (global / per-tenant) checked on every call
+- [ ] Balance check job + `notification.requested` alert
+
+## References
+
+- [02 — service catalog entry](../../02-service-catalog.md#model-gateway-8030)
+- [06 §5.4 — centralized model access](../../06-architectural-patterns.md)
+- [07 §5.4 — dependency graph](../../07-dependency-graphs.md#54-model-gateway)

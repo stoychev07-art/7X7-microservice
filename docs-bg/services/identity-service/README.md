@@ -1,56 +1,71 @@
-# услуга за идентичност
-> Източник на истина за потребители, компании (наематели), членство и доверие: издаване на JWT,
-> OAuth влизане, JWKS публикация, сервизни токени за вътрешни повиквания.
-**Състояние:** 📋 планирано · **Порт (dev):** 8010 · **База данни:** `identity`
-## Отговорности
-- Регистрация с имейл OTP верификация; вход; излизане.
-- JWT **RS256** токени за достъп (краткотрайни, носете потребителско име + искове за членство в компанията)
-  + ротирани токени за опресняване, съхранени от страната на сървъра.
-- Поток за нулиране на парола; хеширане на парола с **Argon2**.
-- Google OAuth вход (само идентичност — обхватите на Drive/Gmail принадлежат на услугата за интеграция).
-- Фирми (наематели): създаване, профил/брандиране, лого.
-- Членство + роли: `owner`, `co-owner`, `admin`, `member`, `viewer`; предоставяне/отменяне.
-- Платформено-административно управление на искове; сесии за имитация (един изстрел, пазач само за четене
-  наложени на шлюза).
-- JWKS крайна точка (`/.well-known/jwks.json`), използвана от шлюза.
-- Краткотрайни **услуги токени** за вътрешни обаждания от услуга към услуга.
-- Търсене на българска EIK компания (адаптери за доставчик на търговски регистър, env-gated).
-## API скица
+# identity-service
+
+> Source of truth for users, companies (tenants), memberships, and trust: JWT issuance,
+> OAuth login, JWKS publication, service tokens for internal calls.
+
+**Status:** 📋 planned · **Port (dev):** 8010 · **Database:** `identity`
+
+## Responsibilities
+
+- Registration with email OTP verification; login; logout.
+- JWT **RS256** access tokens (short-lived, carry user ID + company membership claims)
+  + rotated refresh tokens stored server-side.
+- Password reset flow; password hashing with **Argon2**.
+- Google OAuth login (identity only — Drive/Gmail scopes belong to integration-service).
+- Companies (tenants): create, profile/branding, logo.
+- Memberships + roles: `owner`, `co-owner`, `admin`, `member`, `viewer`; grant/revoke.
+- Platform-admin claim management; impersonation sessions (one-shot, read-only guard
+  enforced at the gateway).
+- JWKS endpoint (`/.well-known/jwks.json`) consumed by the gateway.
+- Short-lived **service tokens** for internal service-to-service calls.
+- Bulgarian EIK company lookup (Commercial Register provider adapters, env-gated).
+
+## API sketch
+
 `POST /auth/register` · `POST /auth/login` · `POST /auth/refresh` · `POST /auth/logout` ·
-`POST /auth/verify` · `POST /auth/password-reset` · `GET /auth/google` + обратно повикване ·
+`POST /auth/verify` · `POST /auth/password-reset` · `GET /auth/google` + callback ·
 `GET/PATCH /users/me` · `GET/POST /companies` · `GET/POST /companies/{id}/members` ·
 `GET /.well-known/jwks.json` · `POST /internal/service-token` ·
 `GET /company-lookup?eik=`
-## Притежавани данни
-`users`, `companies`, `user_companies`, `refresh_tokens`, `password_reset_tokens`,
-`oauth_identities`, `impersonation_sessions`. Външни токени криптирани AES-256-GCM.
-## Зависимости
-| Посока | Какво |
-|---|---|
-| Обаден от | шлюз (JWKS), платформа-услуга, всички потоци за удостоверяване |
-| Обаждания | нищо (листо услуга) |
-| Събития извън | `tenant.created` (→ семена на услугата регистър, бонус за услугата за фактуриране), `user.registered`, `audit.event` |
-| работни места | почистване на изтекъл токен (ежедневно) |
 
-## Бележки по дизайна
-- Ротацията на двойки ключове трябва да се поддържа от първия ден (JWKS с `kid`).
-- **Сервисните токени не трябва да поставят тази услуга на гореща пътека**: изсечен кеш на обаждащите се
-  токени до изтичане и получателите ги проверяват локално чрез токена на услугата JWKS
-  (`x7-common` прилага и двете страни) — прекъсване тук забавя подновяването на токена, никога
-  заявки по време на полет. Вижте [01 §6](../../01-architecture-overview.md#6-identity-tenancy-and-authorization).
-- Миграция: monolith вече използва RS256 JWTs — Фаза 1 на удушвача остава същата
-  форма на претенции, така че монолитът да може да провери токените, издадени тук
-  (виж [05 §5](../../05-migration-pros-and-cons.md)).
-## Контролен списък за внедряване
-- [ ] Схема + Alembic базова линия; Хеширане на аргон2; RS256 управление на двойка ключове
-- [ ] Регистриране/влизане/опресняване/проверка/нулиране на потоци + имейл чрез `notification.requested` събития
-- [ ] Искове за членство в маркер за достъп; `X-Company-Id` договор за валидиране с шлюз
-- [ ] Поток за влизане в Google OAuth
-- [ ] JWKS крайна точка + ротация на ключ
-- [ ] Сечене на сервизен токен + помощник за проверка в `libs/common`
-- [ ] `tenant.created` публикация на събитието
-- [ ] EIK адаптери за търсене на доставчик (порт + адаптер за доставчик)
-## Препратки
-- [01 §6 — Самоличност, наем, разрешение](../../01-architecture-overview.md#6-identity-tenancy-and-authorization)
-- [02 — запис в каталога на услугите](../../02-service-catalog.md#identity-service-8010)
-- [07 §5.2 — графика на зависимости](../../07-dependency-graphs.md#52-identity-service)
+## Data owned
+
+`users`, `companies`, `user_companies`, `refresh_tokens`, `password_reset_tokens`,
+`oauth_identities`, `impersonation_sessions`. External tokens encrypted AES-256-GCM.
+
+## Dependencies
+
+| Direction | What |
+|---|---|
+| Called by | gateway (JWKS), platform-service, all auth flows |
+| Calls | nothing (leaf service) |
+| Events out | `tenant.created` (→ registry-service seeds, billing-service bonus), `user.registered`, `audit.event` |
+| Jobs | expired token cleanup (daily) |
+
+## Design notes
+
+- Key pair rotation must be supported from day one (JWKS with `kid`).
+- **Service tokens must not put this service on the hot path**: callers cache minted
+  tokens until expiry and receivers verify them locally via the service-token JWKS
+  (`x7-common` implements both sides) — an outage here delays token renewal, never
+  in-flight requests. See [01 §6](../../01-architecture-overview.md#6-identity-tenancy-and-authorization).
+- Migration: monolith already uses RS256 JWTs — Phase 1 of the strangler keeps the same
+  claims shape so the monolith can verify tokens issued here
+  (see [05 §5](../../05-migration-pros-and-cons.md)).
+
+## Implementation checklist
+
+- [ ] Schema + Alembic baseline; Argon2 hashing; RS256 keypair management
+- [ ] Register/login/refresh/verify/reset flows + email via `notification.requested` events
+- [ ] Membership claims in access token; `X-Company-Id` validation contract with gateway
+- [ ] Google OAuth login flow
+- [ ] JWKS endpoint + key rotation
+- [ ] Service-token minting + verification helper in `libs/common`
+- [ ] `tenant.created` event publication
+- [ ] EIK lookup provider adapters (port + per-provider adapter)
+
+## References
+
+- [01 §6 — Identity, tenancy, authorization](../../01-architecture-overview.md#6-identity-tenancy-and-authorization)
+- [02 — service catalog entry](../../02-service-catalog.md#identity-service-8010)
+- [07 §5.2 — dependency graph](../../07-dependency-graphs.md#52-identity-service)

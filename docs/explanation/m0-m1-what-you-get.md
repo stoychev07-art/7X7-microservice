@@ -62,10 +62,10 @@ flowchart TB
     client["Client (curl / future UI)"]
     gw["gateway :8000<br/>(the only public door)"]
     id["identity-service<br/>users · companies · JWT · JWKS"]
-    mg["model-gateway<br/>LLM calls · metering"]
+    mg["model-gateway<br/>LLM calls · metering<br/>(→ LiteLLM)"]
     pg[("PostgreSQL<br/>identity DB | modelgw DB")]
     rd[("Redis<br/>rate limits · JWKS cache · events")]
-    llm["Anthropic / OpenAI"]
+    llm["LiteLLM → Anthropic/Claude · local Ollama"]
 
     client -->|"HTTPS"| gw
     gw -->|"verify token via JWKS"| id

@@ -215,6 +215,6 @@ Rules that keep the strangler honest:
 | | Verdict |
 |---|---|
 | Migrate the **agent platform, gateway, and frontend**? | **Yes — this is the product.** The monolith cannot deliver durable multi-agent workflows or multi-channel frontends without a rewrite of its core anyway. |
-| Migrate to **full microservices on day one**? | **No — converge on it.** Adopt the service *boundaries* immediately (separate FastAPI apps, separate schemas, ports/adapters), but co-deploy aggressively and split processes only when load or team structure forces it. |
+| Migrate to **full microservices on day one**? | **No — converge on it.** Adopt the service *boundaries* immediately (separate FastAPI apps, separate schemas, ports/adapters), but co-deploy aggressively and split processes only when load or team structure forces it. The concrete phase-1 grouping (~5 deployables) and split triggers are in [10-phase1-co-deployment.md](./10-phase1-co-deployment.md). |
 | Port **everything** the monolith does? | **No.** [04 §4](./04-functional-coverage.md) drops the audited dead weight (~25% of surface) — that reduction is a large share of the migration's ROI. |
 | Big-bang cutover? | **Never.** Strangler phases 0–5 above, gateway-first, Stripe last. |

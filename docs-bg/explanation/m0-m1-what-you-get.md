@@ -1,61 +1,58 @@
-# Какво получавате след етапи 0 и 1 — и как работи
+# What you get after Milestones 0 & 1 — and how it works
 
-> Обяснение на ясен език към `plans/m0_m1_foundation_and_edge.md`. Прочетете това, за да
-> разберете *какво платформата реално може да прави*, след като тези два етапа са изградени,
-> *защо* частите са оформени по този начин и *как една заявка преминава* през тях от край до край.
-
----
-
-## 1. Резултатът в едно изречение
-
-След етапи 0 и 1 имате **работещ backend скелет с истинска входна врата**: потребител може да
-се регистрира и да влезе през един публичен gateway, да получи подписан token, а този token
-отключва измерено извикване към голям езиков модел — като всяко LLM извикване вече се отчита
-за бъдещо таксуване, въпреки че billing-service още не съществува.
-
-Нищо потребителско не е „завършено“ (още няма чат, регистри или UI). Това, което *е*
-завършено, е **основата, върху която ще стъпи всяка бъдеща функция**: споделената инфраструктура,
-моделът за сигурност, начинът, по който услугите говорят помежду си, и доказателството, че
-всичко работи заедно с едно `docker compose up`.
+> A plain-language companion to `plans/m0_m1_foundation_and_edge.md`. Read this to understand
+> *what the platform can actually do* once these two milestones are built, *why* the pieces
+> are shaped the way they are, and *how a request flows* through them end to end.
 
 ---
+## 1. The one-sentence outcome
 
-## 2. Какво съществува, когато приключите (конкретно)
+After Milestone 0 and 1 you have a **running backend skeleton with a real front door**: a
+user can register and log in through a single public gateway, receive a signed token, and
+that token unlocks a metered call to a large language model — with every LLM call already
+counted for billing, even though the billing service doesn't exist yet.
 
-| Можете да… | Благодарение на… |
+Nothing user-facing is "finished" (there's no chat, no registries, no UI yet). What *is*
+finished is the **foundation every future feature stands on**: the shared plumbing, the
+security model, the way services talk to each other, and the proof that all of it works
+together on one `docker compose up`.
+
+---
+## 2. What exists when you're done (concretely)
+
+| You can… | Because of… |
 |---|---|
-| Стартирате целия backend с една команда | infra `docker-compose` (Postgres + Redis + MinIO) + 3 services |
-| Регистрирате компания + собственик, потвърдите email, влезете | **identity-service** |
-| Получите access token + refresh token (RS256) | **identity-service** JWT издаване |
-| Достигате всеки endpoint през **един** публичен URL (`:8000`) | **gateway** |
-| Накарате gateway да отхвърля подправени/неавтентикирани заявки | gateway JWT проверка + премахване на headers |
-| Направите streaming LLM completion | **model-gateway** |
-| Видите всяко LLM извикване записано за бъдещо таксуване | model-gateway **transactional outbox** + `token.usage` event |
-| Добавите нова услуга чрез копиране на папка | **service-template** + `x7-common` |
-| Пускате lint + type-check + tests при всяка промяна | **CI** |
+| Boot the whole backend with one command | infra `docker-compose` (Postgres + Redis + MinIO) + 3 services |
+| Register a company + owner, verify email, log in | **identity-service** |
+| Get an access token + refresh token (RS256) | **identity-service** JWT issuance |
+| Hit any endpoint through **one** public URL (`:8000`) | **gateway** |
+| Have the gateway reject forged/unauthenticated requests | gateway JWT verification + header stripping |
+| Make a streaming LLM completion | **model-gateway** |
+| See every LLM call recorded for future billing | model-gateway **transactional outbox** + `token.usage` event |
+| Add a new service by copying a folder | **service-template** + `x7-common` |
+| Run lint + type-check + tests on every change | **CI** |
 
-Работят три услуги, но само **една** от тях (gateway, port `8000`) е достъпна отвън.
-identity-service и model-gateway живеят в частна мрежа — не можете да ги извикате директно,
-което е целият смисъл на модела за сигурност.
+Three services run, but only **one** of them (the gateway, port `8000`) is reachable from
+outside. identity-service and model-gateway live on a private network — you cannot call them
+directly, which is the entire point of the security model.
 
 ---
+## 3. The mental model: a thin door, fat rooms, shared plumbing
 
-## 3. Мисловният модел: тънка врата, големи стаи, споделена инфраструктура
+Think of the platform as a building:
 
-Мислете за платформата като за сграда:
-
-- **gateway е входната врата и охраната.** Той умишлено е „прост“ — проверява документа ви,
-  поставя гривна и ви насочва към правилната стая. Никога не върши реална бизнес работа. Ако
-  падне, го заменяте евтино, защото не държи данни.
-- **Всяка услуга е стая със собствен заключен шкаф.** identity-service притежава базата
-  `identity`; model-gateway притежава `modelgw`. **Никоя стая не може да отвори шкафа на друга
-  стая** — ако й трябва информация, трябва да *попита* стаята собственик през HTTP или да
-  *слуша* за съобщения (events). Това е правилото database-per-service и то спира бъркотията в
-  една услуга да се превърне в проблем за всички.
-- **`x7-common` са споделените комунални системи на сградата** — окабеляване, водопровод,
-  пожароизвестяване. Всяка стая е построена по един и същ стандарт, така че всички се стартират,
-  логват, автентикират и emit-ват events по еднакъв начин. Ключово: там няма **никаква бизнес
-  логика** — то никога не знае какво е invoice или agent. Това е чиста инфраструктура.
+- **The gateway is the front door and the security desk.** It's deliberately "dumb" — it
+  checks your ID, stamps your wristband, and points you to the right room. It never does any
+  actual business work. If it falls over, you replace it cheaply because it holds no data.
+- **Each service is a room with its own locked filing cabinet.** identity-service owns the
+  `identity` database; model-gateway owns `modelgw`. **No room can open another room's
+  cabinet** — if it needs information, it has to *ask* the owning room over HTTP, or *listen*
+  for announcements (events). This is the database-per-service rule, and it's what keeps one
+  service's mess from becoming everyone's problem.
+- **`x7-common` is the building's shared utilities** — wiring, plumbing, fire alarms. Every
+  room is built with the same electrical standard so they all boot, log, authenticate, and
+  emit events identically. Crucially, it contains **no business logic** — it never knows what
+  an invoice or an agent is. It's pure infrastructure.
 
 ```mermaid
 flowchart TB
@@ -79,10 +76,9 @@ flowchart TB
 ```
 
 ---
+## 4. How a request actually flows
 
-## 4. Как реално преминава една заявка
-
-### 4.1 Влизане (ръкостискането на доверието)
+### 4.1 Logging in (the trust handshake)
 
 ```mermaid
 sequenceDiagram
@@ -97,12 +93,12 @@ sequenceDiagram
     ID-->>C: access token (RS256, ~30 min) + refresh token (7 days)
 ```
 
-Access token е **подписано твърдение**: „това е user X, член на companies A и B с тези roles.“
-То е подписано с private RS256 key на identity-service. Всеки може да го провери със съответния
-public key, който identity-service публикува на добре познат URL (`/.well-known/jwks.json`).
-Това е JWKS — публичен keyring.
+The access token is a **signed statement**: "this is user X, a member of companies A and B
+with these roles." It's signed with identity-service's private RS256 key. Anyone can verify
+it using the matching public key, which identity-service publishes at a well-known URL
+(`/.well-known/jwks.json`). That's the JWKS — a public keyring.
 
-### 4.2 Всяка автентикирана заявка след това
+### 4.2 Every authenticated request afterward
 
 ```mermaid
 sequenceDiagram
@@ -118,17 +114,17 @@ sequenceDiagram
     S-->>C: response
 ```
 
-Две идеи правят това сигурно и бързо:
+Two ideas make this secure and fast:
 
-1. **gateway проверява token; услугите вярват на gateway.** Downstream услугите не проверяват
-   JWT повторно — те четат проверените headers, които gateway е добавил. gateway *премахва*
-   всички identity headers, които клиентът се опитва да промъкне, така че не можете да се
-   представите за друг user, като сами зададете `X-User-Id`.
-2. **Проверката не изисква телефонно обаждане.** gateway кешира public keys на identity-service,
-   така че проверява tokens локално. identity-service може за кратко да е недостъпен, а
-   съществуващите users продължават да работят — засегнати биха били само *новите logins*.
+1. **The gateway verifies the token; services trust the gateway.** Downstream services
+   don't re-check the JWT — they read the verified headers the gateway injected. The gateway
+   *strips* any identity headers a client tries to sneak in, so you can't forge your way to
+   another user by setting `X-User-Id` yourself.
+2. **Verification needs no phone call.** The gateway caches identity-service's public keys, so
+   it verifies tokens locally. identity-service can be briefly down and existing users keep
+   working — only *new logins* would be affected.
 
-### 4.3 Измерено LLM извикване
+### 4.3 Making a metered LLM call
 
 ```mermaid
 sequenceDiagram
@@ -147,75 +143,72 @@ sequenceDiagram
     MG-->>Bus: (worker) publish token.usage, mark row published
 ```
 
-Умната част е **измерване, което не може да се заобиколи**. Понеже *всяко* LLM извикване в
-цялата платформа трябва да мине през model-gateway, а model-gateway записва usage като вграден
-страничен ефект, бъдеща функционалност няма как да „забрави“ да таксува. И понеже usage се
-записва в database **outbox** в същата transaction като извикването, срив в Redis може да
-*забави* таксуването, но не може да го *загуби*. billing-service (който се изгражда много
-по-късно, в M4) просто ще чете тези `token.usage` events и ще ги сумира — а понеже всеки event
-има unique ID, не може да таксува двойно дори ако event бъде доставен два пъти.
+The clever part is **metering you cannot bypass**. Because *every* LLM call in the whole
+platform must go through model-gateway, and model-gateway records usage as a built-in side
+effect, there's no way for a future feature to "forget" to bill. And because usage is written
+to a database **outbox** in the same transaction as the call, a Redis outage can *delay*
+billing but can never *lose* it. The billing service (built much later, in M4) will simply
+read these `token.usage` events and tally them up — and because each event has a unique ID,
+it can never double-charge even if an event is delivered twice.
 
 ---
+## 5. The four ideas worth internalizing
 
-## 5. Четирите идеи, които си струва да усвоите
-
-Това са проектните решения, които всичко по-късно наследява. Ако ги разберете сега, ще си
-спестите объркване във всеки следващ етап.
+These are the design decisions that everything later inherits. Understanding them now saves
+confusion in every future milestone.
 
 ### 5.1 Database-per-service
-Всяка услуга притежава една база данни и е *единственият* writer към нея. Трябват ви данни от
-друга услуга? Питайте през HTTP или реагирайте на нейните events — никога не влизайте директно в
-нейните tables. **Защо е важно:** в стария monolith всеки module можеше да join-ва всяка table,
-така че всяка промяна беше риск за цялата платформа. Тук всяка зависимост е явен, видим contract.
+Each service owns one database and is the *only* writer to it. Need another service's data?
+Ask over HTTP or react to its events — never reach into its tables. **Why it matters:** in the
+old monolith any module could join any table, so every change was a platform-wide risk. Here
+every dependency is an explicit, visible contract.
 
 ### 5.2 Hexagonal layering (ports & adapters)
-Вътре във всяка услуга слоевете сочат в една посока: `routes → services → ports ← adapters`.
+Inside each service the layers point one way: `routes → services → ports ← adapters`.
 
-- `routes/` = HTTP layer (тънък; валидира и делегира).
-- `services/` = реалната бизнес логика, която познава само **ports** (interfaces).
-- `adapters/` = единственото място, където се появяват database driver, SDK или URL към друга услуга.
-- `deps.py` = единственият „табло за свързване“, където adapters се включват към ports.
+- `routes/` = the HTTP layer (thin; validate and delegate).
+- `services/` = the actual business logic, which only knows **ports** (interfaces).
+- `adapters/` = the only place a database driver, an SDK, or another service's URL appears.
+- `deps.py` = the single "wiring panel" where adapters are plugged into ports.
 
-**Защо е важно:** смяната на LLM provider, database или downstream service е *един нов adapter
-+ един wiring ред* — бизнес логиката не се променя. Затова и database driver, импортиран
-където и да е извън `adapters/`, е провал на review.
+**Why it matters:** swapping the LLM provider, the database, or a downstream service is *one
+new adapter + one wiring line* — the business logic never changes. It's also why a database
+driver imported anywhere outside `adapters/` is a review failure.
 
-### 5.3 gateway е тънък нарочно
-Той прави routing, auth, rate limiting и streaming passthrough — и *нищо друго*. Няма бизнес
-логика, няма комбиниране на данни от няколко услуги. Ако client има нужда от комбиниран изглед,
-услугата, която притежава тези данни, го излага. **Защо е важно:** вратата остава проста, бърза
-и лесна за репликиране; бизнес сложността остава в стаите, където й е мястото.
+### 5.3 The gateway is thin on purpose
+It does routing, auth, rate limiting, and streaming passthrough — and *nothing else*. No
+business logic, no combining data from multiple services. If a client needs a combined view,
+the service that owns that data exposes it. **Why it matters:** the door stays simple, fast,
+and easy to replicate; business complexity stays in the rooms where it belongs.
 
-### 5.4 Два начина за разговор: попитай сега или обяви
-- **Synchronous HTTP**, когато ви трябва отговор *веднага* (gateway пита identity за login).
-- **Events** (Redis Streams), когато *обявявате факт*, който може да интересува други
-  (`tenant.created`, `token.usage`). Обявяващият не знае и не го интересува кой слуша.
+### 5.4 Two ways to talk: ask now, or announce
+- **Synchronous HTTP** when you need an answer *right now* (gateway asking identity to log in).
+- **Events** (Redis Streams) when you're *announcing a fact* others may care about
+  (`tenant.created`, `token.usage`). The announcer doesn't know or care who's listening.
 
-**Защо е важно:** identity-service публикува „създаден е нов tenant“, без да знае, че по-късно
-registry-service ще създаде starter tables, а billing ще даде welcome bonus. Нови listeners се
-закачат, без да се пипа обявяващият — системата расте без прекабеляване.
-
----
-
-## 6. Защо този ред? (M0, после тези три услуги)
-
-- **M0 първо**, защото shared kernel и service-template са основата, от която се строи всяка
-  услуга. Ако объркате инфраструктурата, плащате за това единадесет пъти.
-- **identity-service** след това, защото създава и подписва tokens, които *всичко останало
-  проверява*. Нищо не може да бъде защитено, преди тя да съществува.
-- **model-gateway**, защото зависи от почти нищо (само identity, за internal trust) и доказва
-  LLM + metering пътя рано.
-- **gateway** ги връзва заедно и ви дава единната публична входна точка, с която да тествате
-  целия срез от край до край.
-
-Тези три бяха избрани като първи срез точно защото имат *най-малко* зависимости помежду си —
-така първото нещо, което debug-вате, няма заплетена мрежа зад себе си.
+**Why it matters:** identity-service publishes "a new tenant was created" without knowing that
+later the registry service will seed starter tables and billing will grant a welcome bonus.
+New listeners attach without touching the announcer — the system grows without rewiring.
 
 ---
+## 6. Why this order? (M0 then these three services)
 
-## 7. Как ще разберете, че работи (exit test)
+- **M0 first** because the shared kernel and the service-template are what every service is
+  built from. Get the plumbing wrong and you pay for it eleven times.
+- **identity-service** next because it mints and signs the tokens *everything else verifies*.
+  Nothing can be secured until it exists.
+- **model-gateway** because it depends on almost nothing (just identity, for internal trust)
+  and proves the LLM + metering path early.
+- **gateway** ties them together and gives you the single public entry point to test the whole
+  slice end to end.
 
-Една scripted проверка доказва етапа:
+These three were chosen as the first slice precisely because they have the *fewest*
+dependencies on each other — so the first thing you debug has no tangled web behind it.
+
+---
+## 7. How you'll know it works (the exit test)
+
+A single scripted check proves the milestone:
 
 ```bash
 docker compose up --build
@@ -233,95 +226,92 @@ curl localhost:8000/api/v1/users/me -H "Authorization: Bearer $TOKEN"
 #    → a row appears in modelgw.usage_outbox and a token.usage event is published
 ```
 
-Ако и трите стъпки минат, основата, моделът за сигурност, доверието между услуги и metering
-pipeline са доказани — и всеки следващ етап (agent workspace, registries, billing, UI) се
-включва в същата рамка.
+If all three steps pass, the foundation, the security model, the service-to-service trust,
+and the metering pipeline are all proven — and every later milestone (the agent workspace,
+registries, billing, the UI) plugs into this exact frame.
 
 ---
+## 8. What this is NOT (so expectations are right)
 
-## 8. Какво това НЕ Е (за да са правилни очакванията)
+- **No chat agent yet.** The model-gateway can complete a prompt, but the LangGraph agent
+  runtime, tools, and approval flow come in Milestone 2.
+- **No UI yet.** Everything is exercised via `curl`/tests; the Next.js app is Milestone 5.
+- **No real billing yet.** Usage is *recorded* (the outbox + events), but the service that
+  charges for it arrives in Milestone 4. The contract is in place; the consumer isn't.
+- **No registries, documents, knowledge base, or integrations.** Those are later milestones,
+  each of which is just another "room" copied from the same `service-template`.
 
-- **Още няма chat agent.** model-gateway може да complete-не prompt, но LangGraph agent runtime,
-  tools и approval flow идват в Milestone 2.
-- **Още няма UI.** Всичко се упражнява през `curl`/tests; Next.js app е Milestone 5.
-- **Още няма реално billing.** Usage се *записва* (outbox + events), но услугата, която таксува,
-  идва в Milestone 4. Contract-ът е на място; consumer-ът още не е.
-- **Няма registries, documents, knowledge base или integrations.** Те са следващи етапи, всеки
-  от които е просто още една „стая“, копирана от същия `service-template`.
-
-Доставената стойност тук е **лост**: след M0+M1 всяка нова capability е добавъчна и бърза,
-защото трудните, хоризонтални решения вече са взети и доказани.
+The value delivered here is **leverage**: after M0+M1 every new capability is additive and
+fast, because the hard, cross-cutting decisions are already made and proven.
 
 ---
+## 9. Registry-service in plain English
 
-## 9. Registry-service на прост език
+This is the easiest way to think about it:
 
-Най-лесно е да мислите за него така:
+- `registry-service` is a **dynamic tables engine** for tenant-specific business data.
+- A tenant can define a registry (columns + types), store rows, set access rules, and keep an
+  audit/revision trail, without asking engineers to add new SQL tables.
+- It is where data lives when the shape is flexible and business-specific.
 
-- `registry-service` е **engine за динамични таблици** за tenant-specific бизнес данни.
-- Tenant може да дефинира registry (columns + types), да съхранява rows, да задава access rules
-  и да пази audit/revision trail, без да кара engineers да добавят нови SQL tables.
-- Това е мястото за данни, когато формата е гъвкава и специфична за бизнеса.
+### What problem it solves
 
-### Какъв проблем решава
+Different companies track different things and rename fields differently. One tenant's
+\"Project Tracker\" is another tenant's \"Deals Pipeline\". If we hardcode each variation as
+backend code, we ship slowly and create schema chaos.
 
-Различните компании следят различни неща и наричат полетата по различен начин. „Project
-Tracker“ на един tenant е „Deals Pipeline“ на друг. Ако hardcode-нем всяка вариация като
-backend code, доставяме бавно и създаваме schema chaos.
+`registry-service` centralizes that flexibility:
 
-`registry-service` централизира тази гъвкавост:
+- Create registry definitions at runtime
+- Store rows as dynamic values (JSONB)
+- Add row-level history/revisions
+- Enforce registry access matrix
+- Export/query consistently via API
+- Seed default registries from templates on `tenant.created`
 
-- Създаване на registry definitions по време на runtime
-- Съхраняване на rows като dynamic values (JSONB)
-- Добавяне на row-level history/revisions
-- Налагане на registry access matrix
-- Еднакъв export/query през API
-- Seed-ване на default registries от templates при `tenant.created`
+### Concrete example A: good fit for registry-service
 
-### Конкретен пример A: добър случай за registry-service
-
-**Сценарий**: tenant иска custom sales tracker.
+**Scenario**: A tenant wants a custom sales tracker.
 
 - Registry: `Deals`
 - Columns: `stage`, `client_name`, `expected_value`, `next_followup_at`, `owner`
-- По-късно добавя `referral_source` и `probability` без backend migration.
+- They later add `referral_source` and `probability` without a backend migration.
 
-Това е идеално за `registry-service`, защото:
+This is perfect for `registry-service` because:
 
-- schema е tenant-defined и се променя често
-- грешките са бизнес-бъркотия, не юридическа невалидност
-- agent tools пак могат да го използват, защото canonical roles мапват semantics
-  (например `client_name`, `eik`, `offer_number`), дори display labels да се различават
+- schema is tenant-defined and evolves often
+- mistakes are business-messy, not legally invalid
+- agent tools can still use it because canonical roles map semantics
+  (for example `client_name`, `eik`, `offer_number`) even if display labels differ
 
-### Конкретен пример B: НЕ е registry, трябва да е business-service
+### Concrete example B: NOT a registry, should be business-service
 
-**Сценарий**: издаване на законови фактури.
+**Scenario**: issuing legal invoices.
 
-Фактурите изискват строги invariants:
+Invoices require strict invariants:
 
-- законова номерация без пропуски за всеки tenant
-- коректна VAT math
+- gap-free legal numbering per tenant
+- VAT math correctness
 - immutable issued records
-- валидни state transitions (`draft -> issued -> paid/overdue/void`)
+- valid state transitions (`draft -> issued -> paid/overdue/void`)
 
-Това са твърди правила, не гъвкаво проследяване. Затова invoices принадлежат в
-`business-service`, не в `registry-service`.
+Those are hard rules, not flexible tracking. So invoices belong in `business-service`, not in
+`registry-service`.
 
-### Правилото за границата (използвайте го всеки път)
+### The boundary rule (use this every time)
 
-- Ако грешните данни са предимно **разхвърляни/оперативни**, вероятно са registry.
-- Ако грешните данни са **незаконни/финансово грешни**, те принадлежат в typed domain service
-  (`business-service`, по-късно и части от `document-service`).
+- If wrong data is mostly **messy/operational**, it is likely a registry.
+- If wrong data is **illegal/financially wrong**, it belongs in a typed domain service
+  (`business-service`, later also parts of `document-service`).
 
-Тази граница е причината архитектурата да пази и двете услуги: `registry-service` за
-гъвкавост, `business-service` за строга финансова/юридическа коректност.
+That boundary is why the architecture keeps both services: `registry-service` for flexibility,
+`business-service` for strict financial/legal correctness.
 
 ---
-
-## Вижте също
-- `plans/m0_m1_foundation_and_edge.md` — поетапният build plan с псевдокод.
-- `docs/01-architecture-overview.md` — пълната target architecture (§5 gateway, §6 identity, §7 events).
-- `docs/02-service-catalog.md` — отговорностите на всяка услуга и call matrix.
-- `docs/06-architectural-patterns.md` — логиката зад всеки named pattern.
-- `docs/08-database-architecture.md` — database-per-service и схемите `identity`/`modelgw`.
-- `docs/libs/common/README.md` — договорът на shared kernel `x7-common`.
+## See also
+- `plans/m0_m1_foundation_and_edge.md` — the step-by-step build plan with pseudo-code.
+- `docs/01-architecture-overview.md` — the full target architecture (§5 gateway, §6 identity, §7 events).
+- `docs/02-service-catalog.md` — every service's responsibilities and the call matrix.
+- `docs/06-architectural-patterns.md` — the reasoning behind each named pattern.
+- `docs/08-database-architecture.md` — database-per-service and the `identity`/`modelgw` schemas.
+- `docs/libs/common/README.md` — the `x7-common` shared-kernel contract.

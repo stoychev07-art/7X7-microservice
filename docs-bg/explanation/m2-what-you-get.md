@@ -1,53 +1,50 @@
-# Какво получавате след етап 2 — AI работното пространство
+# What you get after Milestone 2 — the AI workspace
 
-> Обяснение на ясен език към `plans/` и milestone картата
-> (`.cursor/plans/7x7_greenfield_build_e8060d34.plan.md`). Етап 2 изгражда
-> **agent-service** и **knowledge-service** — най-ценния вертикален срез, реалния продукт.
-> Първо прочетете `m0-m1-what-you-get.md`; това надгражда директно върху онзи срез.
-
----
-
-## 1. Резултатът в едно изречение
-
-След етап 2 имате **истински AI chat**, който може да чете документите и бизнес данните на
-вашата компания, да отговаря grounded в тях и **да предлага промени, които човек трябва да
-одобри**, преди да се случат — като всичко се stream-ва live към клиента.
-
-Това е моментът, в който платформата спира да бъде инфраструктура и започва да бъде продукт.
-M0/M1 доказа, че raw model call работи; M2 го превръща в agent, който използва tools, има
-memory, retrieval и предпазна релса при всеки write.
+> Plain-language companion to `plans/` and the milestone map
+> (`.cursor/plans/7x7_greenfield_build_e8060d34.plan.md`). Milestone 2 builds the
+> **agent-service** and the **knowledge-service** — the highest-value vertical, the actual
+> product. Read `m0-m1-what-you-get.md` first; this builds directly on that slice.
 
 ---
+## 1. The one-sentence outcome
 
-## 2. Какво съществува, когато приключите (конкретно)
+After Milestone 2 you have a **real AI chat** that can read your company's documents and
+business data, answer grounded in them, and **propose changes that a human must approve**
+before they happen — all streamed live to the client.
 
-| Можете да… | Благодарение на… |
+This is the moment the platform stops being plumbing and starts being the product. M0/M1
+proved a raw model call works; M2 turns that into a tool-using agent with memory, retrieval,
+and a safety rail on every write.
+
+---
+## 2. What exists when you're done (concretely)
+
+| You can… | Because of… |
 |---|---|
-| Водите streaming chat с agent | **agent-service** + SSE (token-by-token) |
-| Накарате agent да извиква tools по средата на отговор (първо чете данни, после разсъждава) | ReAct loop в default graph |
-| Накарате agent да извлича факти от качените ви docs | **knowledge-service** `/search` + tool-ът `knowledge_search` |
-| Качвате PDFs/DOCX/XLSX и те да се индексират за search | knowledge-service ingest pipeline (parse → chunk → embed) |
-| Получавате карта „одобрявате ли това действие?“ преди всеки write | human-in-the-loop **interrupt** при tools с `kind="write"` |
-| Възобновите paused chat след затваряне на tab | Postgres **checkpointer** + `POST /agents/{id}/resume` |
-| Добавите съвсем нов agent, като пуснете folder | manifest discovery (`app/agents/<id>/manifest.yaml`) |
-| Пазите conversation history за всеки user/agent | module-ът `conversations/` в agent DB |
+| Hold a streaming chat with an agent | **agent-service** + SSE (token-by-token) |
+| Have the agent call tools mid-answer (read data, then reason) | the ReAct loop in the default graph |
+| Have the agent retrieve facts from your uploaded docs | **knowledge-service** `/search` + the `knowledge_search` tool |
+| Upload PDFs/DOCX/XLSX and have them indexed for search | knowledge-service ingest pipeline (parse → chunk → embed) |
+| Get an "approve this action?" card before any write | the human-in-the-loop **interrupt** on `kind="write"` tools |
+| Resume a paused chat after closing the tab | Postgres **checkpointer** + `POST /agents/{id}/resume` |
+| Add a brand-new agent by dropping in a folder | manifest discovery (`app/agents/<id>/manifest.yaml`) |
+| Keep conversation history per user/agent | the `conversations/` module in the agent DB |
 
-Първият доставен agent е `erp-agent` (общият бизнес асистент), с първите tools:
-`knowledge_search` (read), `registry_query` (read) и `registry_add_row` (write — за да видите
-approval flow от край до край).
+The first agent shipped is `erp-agent` (the general business assistant), with the first tools:
+`knowledge_search` (read), `registry_query` (read), and `registry_add_row` (write — so you
+see the approval flow end to end).
 
 ---
+## 3. The mental model: two new rooms
 
-## 3. Мисловният модел: две нови стаи
-
-- **agent-service е мозъкът и разговорът.** Той изпълнява agent „graph“ (мислете за flowchart,
-  през който AI минава), пази chat history в собствената си база, говори с model-gateway, за да
-  мисли, и извиква tools, за да действа. Това е **единствената услуга, която се разклонява**
-  към всичко останало — защото tools трябва да докосват всичко.
-- **knowledge-service е търсимата памет на компанията.** Качвате documents; той ги parse-ва,
-  нарязва ги на chunks, превръща всеки chunk във vector (числов отпечатък на meaning) чрез
-  model-gateway и ги съхранява, за да може agent по-късно да попита „какво знаем за X?“ и да
-  получи релевантните passages.
+- **agent-service is the brain and the conversation.** It runs the agent "graph" (think: a
+  flowchart the AI walks through), keeps chat history in its own database, talks to the
+  model-gateway for thinking, and calls tools to act. It is the **only service that fans out**
+  to everything else — because tools need to touch everything.
+- **knowledge-service is the company's searchable memory.** You upload documents; it parses
+  them, slices them into chunks, turns each chunk into a vector (a numeric fingerprint of
+  meaning) via the model-gateway, and stores them so the agent can later ask "what do we know
+  about X?" and get the relevant passages back.
 
 ```mermaid
 flowchart TB
@@ -71,10 +68,9 @@ flowchart TB
 ```
 
 ---
+## 4. How it works
 
-## 4. Как работи
-
-### 4.1 Grounded chat turn (ReAct loop)
+### 4.1 A grounded chat turn (the ReAct loop)
 
 ```mermaid
 sequenceDiagram
@@ -96,12 +92,11 @@ sequenceDiagram
     A-->>C: done frame
 ```
 
-Agent **разсъждава, действа, наблюдава, повтаря** — може да прочете registry, да търси в
-documents и после да състави отговор, всичко в един turn. Read tools се изпълняват автоматично;
-model никога не вижда tool, който не му е изрично разрешен в manifest (allow-list е security
-boundary).
+The agent **reasons, acts, observes, repeats** — it can read a registry, search documents,
+then compose an answer, all in one turn. Read tools run automatically; the model never sees a
+tool it wasn't explicitly granted in its manifest (the allow-list is the security boundary).
 
-### 4.2 Write изисква вашето одобрение (durable interrupt)
+### 4.2 A write needs your approval (durable interrupt)
 
 ```mermaid
 sequenceDiagram
@@ -120,12 +115,12 @@ sequenceDiagram
     A-->>C: stream continues to the final answer
 ```
 
-Ключовата идея: **AI не може да промени нищо без човешко „да“.** И понеже paused state се
-записва в Postgres (не се държи в memory), approval оцелява при disconnect, server restart или
-преминаване от web към phone. Write носи и idempotency key, така че дори системата да retry-не,
-действието се случва точно веднъж.
+The key idea: **the AI cannot change anything without a human "yes."** And because the paused
+state is saved to Postgres (not held in memory), the approval survives a disconnect, a server
+restart, or switching from web to phone. The write also carries an idempotency key, so even if
+the system retries, the action happens exactly once.
 
-### 4.3 Documents стават търсими
+### 4.3 Documents become searchable
 
 ```mermaid
 flowchart LR
@@ -136,68 +131,64 @@ flowchart LR
     idx -. "document.ingested" .-> agent["agent-service<br/>(invalidate stale cache)"]
 ```
 
-**namespace** е просто именувана кофа със знание (напр. `library`, `offers-kb`). Manifest-ът на
-agent изброява кои namespaces може да търси, така че различните agents могат да имат различно
-knowledge.
+A **namespace** is just a labelled bucket of knowledge (e.g. `library`, `offers-kb`). An agent's
+manifest lists which namespaces it may search, so different agents can have different knowledge.
 
 ---
+## 5. The ideas worth internalizing
 
-## 5. Идеите, които си струва да усвоите
-
-- **Extensibility by convention.** Нов agent е folder + `manifest.yaml`; нов tool е един module
-  + един ред в catalog, след което agents opt in през manifest. Няма промени в core code. Това е
-  същият plugin pattern, използван по-късно за integration adapters.
-- **manifest е contract, не code.** Model, allowed tools, knowledge namespaces и channels са
-  *data*, които можете да редактирате и review-вате — не са скрити в logic.
-- **Write = interrupt, by construction.** Tool, маркиран като `write`, винаги спира за approval;
-  авторът на tool не може да го заобиколи с хитър prompt. Safety е structural.
-- **Conversation history е module, не service.** Тя стои вътре в agent-service зад
-  `ConversationStore` port, защото history reads/writes се случват на всеки turn — network hop
-  там би бил чист latency tax. Port го държи евтино за отделяне по-късно, ако някога потрябва.
-- **Agent никога не докосва базата на друга услуга.** Той извлича през `/search` API на
-  knowledge-service и действа чрез tool HTTP calls — никога чрез влизане директно в tables.
-
----
-
-## 6. Защо този етап идва тук
-
-Agent platform е ядрото на стойността на продукта, затова се изгражда възможно най-рано, щом
-основата позволява — веднага след като M1 му дава работещ model-gateway (за мислене) и identity
-(за да знае кой пита). knowledge-service се доставя заедно с него, защото agent без retrieval не
-може да отговаря grounded на бизнес въпроси. Structured-data tools (registries, documents) тук
-са stubbed/minimal и получават реалните си backends в M3.
+- **Extensibility by convention.** A new agent is a folder + a `manifest.yaml`; a new tool is
+  one module + one line in the catalog, then agents opt in via their manifest. No core code
+  changes. This is the same plugin pattern used later for integration adapters.
+- **The manifest is a contract, not code.** Model, allowed tools, knowledge namespaces, and
+  channels are *data* you can edit and review — not buried in logic.
+- **Write = interrupt, by construction.** A tool marked `write` always pauses for approval; a
+  tool author cannot bypass it with clever prompt wording. Safety is structural.
+- **Conversation history is a module, not a service.** It sits inside agent-service behind a
+  `ConversationStore` port, because history reads/writes happen on every single turn — a
+  network hop there would be pure latency tax. The port keeps it cheap to extract later if
+  ever needed.
+- **The agent never touches another service's database.** It retrieves through
+  knowledge-service's `/search` API and acts through tool HTTP calls — never by reaching into
+  tables.
 
 ---
+## 6. Why this milestone comes here
 
-## 7. Как ще разберете, че работи (exit test)
-
-> Реален chat turn, който извлича grounded context **и** предлага одобрен write.
-
-1. Качете document в namespace; потвърдете, че се chunk-ва и embed-ва.
-2. Попитайте `erp-agent` въпрос, чийто отговор е в този document → agent извиква
-   `knowledge_search` и отговаря с използване на retrieved passages.
-3. Помолете го да добави row към registry → stream-ът спира с `approval_required`; одобрявате →
-   write се изпълнява и отговорът завършва.
-4. Затворете tab по време на approval и го отворете пак → pending approval още е там.
+The agent platform is the product's core value, so it's built as early as the foundation
+allows — right after M1 gives it a working model-gateway (to think) and identity (to know who's
+asking). knowledge-service ships alongside it because an agent without retrieval can't answer
+grounded business questions. The structured-data tools (registries, documents) are stubbed/
+minimal here and get their real backends in M3.
 
 ---
+## 7. How you'll know it works (the exit test)
 
-## 8. Какво това НЕ Е (за да са правилни очакванията)
+> A real chat turn that retrieves grounded context **and** proposes an approved write.
 
-- **Registries и documents още не са напълно реални.** `registry_query`/`registry_add_row`
-  работят срещу ранен registry-service; богатият registry engine, templates, pricing и document
-  generation идват в **Milestone 3**.
-- **Още няма billing enforcement.** Agent прави stub за pre-flight balance check, но
-  billing-service, който реално следи balances, идва в **Milestone 4**. (Metering events от M1
-  вече текат.)
-- **Още няма integrations (email/Drive/WebDAV).** Тези tools и file-sync engines се свързват в
-  **Milestone 4**, когато integration-service съществува.
-- **Още няма UI.** Упражнява се през `curl`/tests; chat workspace UI е **Milestone 5**.
+1. Upload a document to a namespace; confirm it gets chunked and embedded.
+2. Ask `erp-agent` a question whose answer is in that document → the agent calls
+   `knowledge_search` and answers using the retrieved passages.
+3. Ask it to add a row to a registry → the stream pauses with `approval_required`; approve →
+   the write executes and the answer completes.
+4. Close the tab during the approval and reopen → the pending approval is still there.
 
 ---
+## 8. What this is NOT (so expectations are right)
 
-## Вижте също
-- `docs/explanation/m0-m1-what-you-get.md` — основата, върху която това надгражда.
-- `docs/03-agent-platform.md` — пълният design за agent/tool/graph и рецептата „add an agent“.
+- **Registries and documents aren't fully real yet.** `registry_query`/`registry_add_row`
+  work against an early registry-service; the rich registry engine, templates, pricing, and
+  document generation arrive in **Milestone 3**.
+- **No billing enforcement yet.** The agent does a pre-flight balance check stub, but the
+  billing-service that actually tracks balances comes in **Milestone 4**. (Metering events
+  from M1 are already flowing.)
+- **No integrations (email/Drive/WebDAV) yet.** Those tools and the file-sync engines wire up
+  in **Milestone 4** once integration-service exists.
+- **No UI yet.** Exercised via `curl`/tests; the chat workspace UI is **Milestone 5**.
+
+---
+## See also
+- `docs/explanation/m0-m1-what-you-get.md` — the foundation this builds on.
+- `docs/03-agent-platform.md` — the full agent/tool/graph design and the "add an agent" recipe.
 - `docs/services/agent-service/README.md`, `docs/services/knowledge-service/README.md`.
 - `docs/01-architecture-overview.md` §key flows 1–3 (chat turn, approval, ingestion).

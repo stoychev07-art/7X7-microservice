@@ -1,60 +1,55 @@
-# Какво получавате след етап 3 — структурирани данни + документи
+# What you get after Milestone 3 — structured data + documents
 
-> Обяснение на ясен език към milestone картата
-> (`.cursor/plans/7x7_greenfield_build_e8060d34.plan.md`). Етап 3 изгражда
-> **registry-service** (гръбнака за structured data) и **document-service** (templates,
-> PDF/Excel, pricing, margins, KSS), след което насочва tools на agent към тях реално.
-
----
-
-## 1. Резултатът в едно изречение
-
-След етап 3 вашият agent може **да работи с реални бизнес данни и да създава реални документи**:
-да query-ва и update-ва tenant-defined registries (CRM, contracts, assets, tasks…), да match-ва
-prices, да draft-ва offers и да generate-ва PDFs/Excel — всичко през същия approve-before-write
-flow.
-
-M2 ви даде умен chat, който можеше да *говори за* данните ви. M3 му дава реални ръце:
-structured tables, които чете/пише, и document engine, от който генерира.
+> Plain-language companion to the milestone map
+> (`.cursor/plans/7x7_greenfield_build_e8060d34.plan.md`). Milestone 3 builds the
+> **registry-service** (the structured-data backbone) and the **document-service** (templates,
+> PDF/Excel, pricing, margins, KSS), then points the agent's tools at them for real.
 
 ---
+## 1. The one-sentence outcome
 
-## 2. Какво съществува, когато приключите (конкретно)
+After Milestone 3 your agent can **work with real business data and produce real documents**:
+query and update tenant-defined registries (CRM, contracts, assets, tasks…), match prices,
+draft offers, and generate PDFs/Excel — all through the same approve-before-write flow.
 
-| Можете да… | Благодарение на… |
+M2 gave you a clever chat that could *talk about* your data. M3 gives it actual hands: the
+structured tables it reads/writes and the document engine it generates from.
+
+---
+## 2. What exists when you're done (concretely)
+
+| You can… | Because of… |
 |---|---|
-| Създавате custom tables (registries) с typed columns | **registry-service** |
-| Съхранявате/query-вате/update-вате rows с безопасни concurrent edits | registry rows (JSONB) + optimistic locking |
-| Контролирате кой може да вижда/edit-ва всеки registry; виждате audit trail + revisions | access matrix + audit + `row_revisions` |
-| Получавате starter registries автоматично при създаване на компания | template install при `tenant.created` |
-| Накарате agents да намират field по *meaning* в различно именувани tables | **canonical column roles** (`client_name`, `eik`, …) |
-| Поддържате master price list с history и AI-assisted import | **document-service** prices |
-| Генерирате branded PDF/Excel/Word от template + data | document-service render (headless Chromium) |
-| Draft-вате offer / попълвате KSS cost sheet | offer + KSS endpoints + agent tools |
-| Export-вате всеки registry към XLSX | registry export |
+| Create custom tables (registries) with typed columns | **registry-service** |
+| Store/query/update rows with safe concurrent edits | registry rows (JSONB) + optimistic locking |
+| Control who can see/edit each registry; see an audit trail + revisions | access matrix + audit + `row_revisions` |
+| Get starter registries automatically when a company is created | template install on `tenant.created` |
+| Have agents find a field by *meaning* across differently-named tables | **canonical column roles** (`client_name`, `eik`, …) |
+| Keep a master price list with history and AI-assisted import | **document-service** prices |
+| Generate a branded PDF/Excel/Word from a template + data | document-service render (headless Chromium) |
+| Draft an offer / fill a KSS cost sheet | offer + KSS endpoints + agent tools |
+| Export any registry to XLSX | registry export |
 
-Agent tools, които тук са добавени/превключени към реални backends: `registry_query`,
-`registry_add_row`, `registry_update_row`, `price_match`, `offer_draft`, `generate_document`
-(write), `kss_*`.
+Agent tools added/flipped to real backends here: `registry_query`, `registry_add_row`,
+`registry_update_row`, `price_match`, `offer_draft`, `generate_document` (write), `kss_*`.
 
 ---
+## 3. The mental model: two more rooms, with a sharp boundary
 
-## 3. Мисловният модел: още две стаи, с ясна граница
+- **registry-service is your "build-your-own-tables" engine.** Each tenant defines what they
+  track (columns + types); rows are stored flexibly (JSONB) but with real backend controls:
+  permissions, audit history, versioning, export. It's Airtable-like flexibility with
+  enterprise guardrails.
+- **document-service turns data into documents.** Visual templates, PDF rendering (isolated in
+  its own service so heavy Chromium rendering never starves anything else), Excel/Word
+  generation, plus the **price list and margins** that feed offers and KSS.
 
-- **registry-service е вашият engine „направи си сам таблици“.** Всеки tenant дефинира какво
-  следи (columns + types); rows се съхраняват гъвкаво (JSONB), но с реални backend контроли:
-  permissions, audit history, versioning, export. Това е Airtable-like гъвкавост с enterprise
-  guardrails.
-- **document-service превръща данни в документи.** Visual templates, PDF rendering (изолирано в
-  собствена услуга, за да не задушава тежкият Chromium rendering нищо друго), Excel/Word
-  generation, плюс **price list и margins**, които захранват offers и KSS.
+The crucial design rule (you'll use it constantly):
 
-Ключовото design правило (ще го използвате постоянно):
-
-> Ако грешните данни са просто **разхвърляни** → това е **registry**.
-> Ако грешните данни са **незаконни или финансово грешни** → принадлежат в typed service
-> (business-service, M6). Pricing/margins живеят в document-service, защото задачата им е да
-> захранват offers и KSS.
+> If wrong data is merely **messy** → it's a **registry**.
+> If wrong data is **illegal or financially wrong** → it belongs in a typed service
+> (business-service, M6). Pricing/margins live in document-service because their job is to
+> feed offers and KSS.
 
 ```mermaid
 flowchart TB
@@ -76,23 +71,22 @@ flowchart TB
 ```
 
 ---
+## 4. How it works
 
-## 4. Как работи
+### 4.1 How a registry stores data (schema vs rows)
 
-### 4.1 Как registry съхранява данни (schema vs rows)
+Registries split **definition** from **data**:
 
-Registries разделят **definition** от **data**:
+- `registry_columns` = the schema (column `key`, `label`, `type`, optional `canonical_role`).
+- `registry_rows.values` = the actual row, stored as JSONB keyed by column.
+- `version` on each row = optimistic locking, so two simultaneous edits can't silently
+  overwrite each other (the second one is told "the row changed, re-read it").
 
-- `registry_columns` = schema (column `key`, `label`, `type`, optional `canonical_role`).
-- `registry_rows.values` = реалният row, съхранен като JSONB, keyed by column.
-- `version` на всеки row = optimistic locking, така че две едновременни edits не могат тихо да
-  се презапишат една друга (на втората се казва „row се промени, прочети го отново“).
+**Canonical roles** are the clever part: tenant A calls a column "Клиент" and tenant B calls it
+"Customer", but both tag it with the canonical role `client_name`. An agent tool then finds the
+client field semantically, regardless of the tenant's labels.
 
-**Canonical roles** са умната част: tenant A нарича колона „Клиент“, а tenant B я нарича
-"Customer", но и двамата я tag-ват с canonical role `client_name`. Тогава agent tool намира
-client field семантично, независимо от labels на tenant.
-
-### 4.2 Agent генерира document
+### 4.2 An agent generates a document
 
 ```mermaid
 sequenceDiagram
@@ -113,67 +107,62 @@ sequenceDiagram
     A-->>C: "Here's the offer" + link
 ```
 
-### 4.3 Tenant onboarding seed-ва registries
+### 4.3 Tenant onboarding seeds registries
 
-Когато identity-service публикува `tenant.created` (още в M1), registry-service сега
-**реагира** на него: инсталира system registries (work pipeline „Работен регистър“, invoices
-„Фактури“, personal/office tasks) от templates — така нова компания започва с полезни tables,
-а не с празен лист. Обявяващият (identity) все още не знае нищо за registries; listener-ът
-върши работата.
-
----
-
-## 5. Идеите, които си струва да усвоите
-
-- **Schema-as-data.** Tenants променят data model по време на runtime (добавят column) без
-  database migration и без deploy — защото columns са rows в `registry_columns`, не SQL DDL.
-- **Defense-in-depth tenancy (RLS).** Освен че всяка query е tenant-scoped в code, Postgres
-  Row-Level Security го налага още веднъж в database — забравен filter връща нищо, вместо да
-  leaked-не данни на друг tenant.
-- **Canonical roles са семантичното лепило.** Те позволяват agents, document generation и
-  (по-късно) business-service да resolve-ват „the client“ / „the EIK“ / „the offer number“ при
-  tenants, които са кръстили columns различно.
-- **Pricing живее при documents, не при money.** То е тук, защото целта му е да захранва
-  offers/KSS; financial/legal invariants (invoices) идват по-късно в business-service, който
-  *чете* тези prices през API.
-- **Tasks са просто registries.** Два bespoke task modules от старата система се свиват до
-  system registry templates — и безплатно получават audit, revisions, export и access control.
+When identity-service published `tenant.created` (back in M1), registry-service now **reacts**
+to it: it installs the system registries (work pipeline "Работен регистър", invoices "Фактури",
+personal/office tasks) from templates — so a new company starts with useful tables, not a blank
+slate. The announcer (identity) still knows nothing about registries; the listener does the work.
 
 ---
+## 5. The ideas worth internalizing
 
-## 6. Защо този етап идва тук
-
-Agent в M2 е толкова полезен, колкото са данните и документите, които може да докосва. M3
-доставя двата най-големи backends зад tools на agent, така че workspace става наистина
-продуктивен. Идва след agent (а не преди), защото tool *contracts* — дефинирани като ports в
-M2 — позволяват тези услуги да бъдат изградени и „включени“ чрез rewiring на `deps.py`, без да
-се променя agent.
-
----
-
-## 7. Как ще разберете, че работи (exit test)
-
-1. Създайте registry с няколко typed columns; добавете и update-нете rows; потвърдете, че audit
-   trail и нова revision се появяват и че stale-version update се отхвърля.
-2. Създайте втора компания → потвърдете, че system registries се auto-seed-ват.
-3. Помолете agent да намери client и да draft-не offer → той resolve-ва client по canonical
-   role, match-ва prices и (след approval) връща generated PDF link.
-4. Export-нете registry към XLSX.
+- **Schema-as-data.** Tenants change their data model at runtime (add a column) with no
+  database migration and no deploy — because columns are rows in `registry_columns`, not SQL
+  DDL.
+- **Defense-in-depth tenancy (RLS).** On top of every query being tenant-scoped in code,
+  Postgres Row-Level Security enforces it again at the database — a forgotten filter returns
+  nothing instead of leaking another tenant's data.
+- **Canonical roles are the semantic glue.** They let agents, document generation, and (later)
+  business-service resolve "the client" / "the EIK" / "the offer number" across tenants that
+  named their columns differently.
+- **Pricing lives with documents, not with money.** It's here because its purpose is feeding
+  offers/KSS; the financial/legal invariants (invoices) come later in business-service, which
+  *reads* these prices over the API.
+- **Tasks are just registries.** Two bespoke task modules from the old system collapse into
+  system registry templates — and gain audit, revisions, export, and access control for free.
 
 ---
+## 6. Why this milestone comes here
 
-## 8. Какво това НЕ Е (за да са правилни очакванията)
-
-- **Още няма реално invoicing/inventory/expenses.** „Фактури“ тук все още е flexible registry;
-  typed, legally-numbered invoices са **Milestone 6** (business-service).
-- **Още няма billing, email, Drive или WebDAV.** Тези услуги идват в **Milestone 4**.
-- **Още няма UI.** Registries, prices и template editor получават своите screens в
-  **Milestone 5**; тук всичко е API/agent-driven.
+The agent in M2 is only as useful as the data and documents it can touch. M3 delivers the two
+biggest backends behind the agent's tools, so the workspace becomes genuinely productive. It
+comes after the agent (rather than before) because the tool *contracts* — defined as ports in
+M2 — let these services be built and "plugged in" by rewiring `deps.py`, without changing the
+agent.
 
 ---
+## 7. How you'll know it works (the exit test)
 
-## Вижте също
-- `docs/explanation/m2-what-you-get.md` — agent, който използва тези backends.
+1. Create a registry with a few typed columns; add and update rows; confirm the audit trail and
+   a new revision appear, and that a stale-version update is rejected.
+2. Create a second company → confirm the system registries are auto-seeded.
+3. Ask the agent to find a client and draft an offer → it resolves the client by canonical role,
+   matches prices, and (after approval) returns a generated PDF link.
+4. Export a registry to XLSX.
+
+---
+## 8. What this is NOT (so expectations are right)
+
+- **No real invoicing/inventory/expenses yet.** "Фактури" is still a flexible registry here;
+  typed, legally-numbered invoices are **Milestone 6** (business-service).
+- **No billing, email, Drive, or WebDAV yet.** Those services arrive in **Milestone 4**.
+- **No UI yet.** Registries, prices, and the template editor get their screens in
+  **Milestone 5**; here everything is API/agent-driven.
+
+---
+## See also
+- `docs/explanation/m2-what-you-get.md` — the agent that uses these backends.
 - `docs/services/registry-service/README.md`, `docs/services/document-service/README.md`.
-- `docs/08-database-architecture.md` §4.5–4.6 — схемите `registry` и `document`.
-- `docs/02-service-catalog.md` — boundary таблицата registry ↔ business-service.
+- `docs/08-database-architecture.md` §4.5–4.6 — the `registry` and `document` schemas.
+- `docs/02-service-catalog.md` — the registry ↔ business-service boundary table.

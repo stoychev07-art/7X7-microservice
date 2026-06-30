@@ -1,13 +1,28 @@
-# x7-common — споделеното ядро
-> Един малък пакет с леки зависимости (`libs/common`, име за импортиране`x7_common`) инсталиран> от всяка услуга. Той притежава скучната, но критична водопроводна инсталация, така че всички 11 услуги да стартират,> регистрирайте, удостоверявайте, извиквайте се взаимно и публикувайте събития по абсолютно същия начин.
-**Статус:** 📋 планирано · **Местоположение:**`libs/common`· **Разпространение:**`x7-common` ·
-**Внос:**`x7_common`
+# x7-common — the shared kernel
 
-## Договорът
-Две правила правят споделеното ядро ​​безопасно вместо капан за свързване:
-1. **Никаква бизнес логика.** Ако дадена функция знае какво е фактура, регистър илиагент е, не му е мястото тук. Само транспорт, видимост, автентичен водопровод имеждусервизни DTO.2. **Допълнителна еволюция.** Всяка услуга зависи от този пакет, така че е важна промянасмяна на 11 услуги. Новите полета/помощниците са добре; преименувания и премахвания се нуждаят от aпрозорец за амортизация.
-Услугите не могат **никога** да импортират код на друга услуга —`x7_common`е единственият споделенPython зависимост между тях.
-## Оформление на пакета
+> One small, dependency-light package (`libs/common`, import name `x7_common`) installed
+> by every service. It owns the boring-but-critical plumbing so that all 11 services boot,
+> log, authenticate, call each other, and publish events the exact same way.
+
+**Status:** 📋 planned · **Location:** `libs/common` · **Distribution:** `x7-common` ·
+**Import:** `x7_common`
+
+## The contract
+
+Two rules make a shared kernel safe instead of a coupling trap:
+
+1. **No business logic, ever.** If a function knows what an invoice, a registry, or an
+   agent is, it does not belong here. Only transport, observability, auth plumbing, and
+   cross-service DTOs.
+2. **Additive evolution.** Every service depends on this package, so a breaking change is
+   an 11-service change. New fields/helpers are fine; renames and removals need a
+   deprecation window.
+
+Services may **never** import another service's code — `x7_common` is the only shared
+Python dependency between them.
+
+## Package layout
+
 ```
 libs/common/
 ├── x7_common/
@@ -35,10 +50,12 @@ libs/common/
 └── pyproject.toml
 ```
 
-## Ръководство на модула
+## Module guide
+
 ### `config.py` — `CommonSettings`
 
-Всяка услуга`Settings`подкласове това; цялата конфигурация се управлява от env (12-фактор).
+Every service's `Settings` subclasses this; all configuration is env-driven (12-factor).
+
 ```python
 class CommonSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -72,10 +89,15 @@ class CommonSettings(BaseSettings):
     otel_exporter_otlp_endpoint: str | None = None
 ```
 
-Услугата добавя само свои собствени полета (`database_url`, `stripe_secret`, …) в своя`config.py`.
+A service adds only its own fields (`database_url`, `stripe_secret`, …) in its `config.py`.
 
-### `auth.py`— идентификационен водопровод (без правила)
-Ключова разлика от библиотека за декодиране на носител: в тази архитектура **шлюзът проверяваJWT** на крайния потребител (RS256 чрез JWKS) и препраща проверени заглавки. Услугите следователно*извличане*, а не *проверка*, идентичност на потребителя — но те **проверяват** токените на услугата, които доказватобаждането дойде от вътрешността на платформата.
+### `auth.py` — identity plumbing (no policy)
+
+Key difference from a bearer-decoding library: in this architecture **the gateway verifies
+the end-user JWT** (RS256 via JWKS) and forwards verified headers. Services therefore
+*extract*, not *verify*, user identity — but they **do** verify service tokens, which prove
+the call came from inside the platform.
+
 ```python
 @dataclass(frozen=True, slots=True)
 class AuthContext:
@@ -98,11 +120,23 @@ def require_service_token(audience: str) -> Depends: ...
     # applied to /internal/* routes
 ```
 
-Механика на сервизния токен — предназначена да държи услугата за самоличност **от пътя на заявка**:клиентският помощник изсича токен веднъж и го кешира до малко преди това`exp`, освежаващовъв фонов режим;`require_service_token`проверява подписа **локално** срещууслугата-токен JWKS на услугата за идентичност (кеширана, със същото`kid`обработка на въртене катопотребителят JWKS). Следователно прекъсването на услугата за самоличност блокира само подновяването на токена – и самоведнъж кешираните токени изтичат — никога трафик по време на полет.
-### `http.py`— един обединен`httpx.AsyncClient`на процес
-Singleton със разумни изчаквания и ограничения на връзката; инициализирано/затворено от продължителността на живота.Използват се всички адаптери`get_client()`— никой не създава ad-hoc клиенти (прекъсване на връзкатапътят на инструмента на агента е реална цена за забавяне).
-### `events.py`— автобусът за събития Redis Streams
-Частта, която mango-common няма, изисквана от нашите управлявани от събития потоци([01 §7](../../01-architecture-overview.md#7-asynchronous-work-and-events)):
+Service-token mechanics — designed to keep identity-service **off the per-request path**:
+the client helper mints a token once and caches it until shortly before `exp`, refreshing
+in the background; `require_service_token` verifies the signature **locally** against
+identity-service's service-token JWKS (cached, with the same `kid` rotation handling as
+the user JWKS). An identity-service outage therefore blocks only token renewal — and only
+once cached tokens expire — never in-flight traffic.
+
+### `http.py` — one pooled `httpx.AsyncClient` per process
+
+Singleton with sane timeouts and connection limits; initialized/closed by the lifespan.
+All adapters use `get_client()` — nobody constructs ad-hoc clients (connection churn on
+the agent tool path is a real latency cost).
+
+### `events.py` — the Redis Streams event bus
+
+The piece mango-common doesn't have, required by our event-driven flows
+([01 §7](../../01-architecture-overview.md#7-asynchronous-work-and-events)):
 
 ```python
 bus = EventBus(redis_url, service_name)
@@ -114,28 +148,60 @@ async def on_tenant_created(evt: TenantCreated) -> None:
     ...  # idempotent — at-least-once delivery
 ```
 
-- Въвели полезни товари от`schemas/events.py`(Pydantic-утвърден от двата края).- Групи потребители по услуга; автоматично потвърждение при успех, повторен опит с мъртва буква след Nнеуспехи.- Всяко събитие носи`event_id`, `occurred_at`, `tenant_id`, `request_id`— използват потребителите  `event_id`като техен ключ за идемпотентност.
-### `logging.py` + `middleware.py` + `telemetry.py`— наблюдаемост
-- structlog JSON линии с`service`, `request_id`, `user_id`, `company_id`обвързан отcontextvar — зададен веднъж от`RequestIdMiddleware` + `auth_context`, присъства на всеки ред.- `RequestIdMiddleware`: прочети`X-Request-Id`(или генериране), свързване, ехо при отговор.- `telemetry.init(app)`: Проследяване на OpenTelemetry за FastAPI + httpx, така че проследяването е започнало вшлюзът продължава през всеки скок.
-### `health.py` + `lifespan.py`— равномерна оперативна повърхност
-- `health_router(checks={"db": ping_db, "redis": ping_redis})`монтажи`GET /health`
-(жизненост, винаги 200) и`GET /ready`(503, ако някое изследване е неуспешно) — договорът DockerCompose / k8s проверките разчитат за всяка услуга.- `make_lifespan(on_startup=[...], on_shutdown=[...])`зарежда httpx пула, телеметрия,и шината на събитията, след което изпълнява специфични за услугата кукички (DB двигател, arq pool).
-### `schemas/`— теленните договори
-Само DTO, които **пресичат граница на услуга**, живеят тук (форми за чат/завършване, използвани отагент-услуга ↔ модел-шлюз, парчета за извличане, полезни товари за събития,`AuthContext`). DTOизползвано от точно една услуга остава в тази услуга`models/`— напр. сесия/съобщениеDTOs живеят в агентска услуга, тъй като разговорите са вътрешни за тях. Преместване на тип туке умишлен акт: става замразен договор.
-### `errors.py` + `pagination.py`— API последователност
-- Един плик за грешка (`{"error": {"code", "message", "request_id"}}`) и споделено изключениеманипулатори, така че всички 11 услуги се провалят идентично и интерфейсът обработва една форма.- Параметри/отговор за страниране на курсора, използвани от всяка крайна точка на списък.
-### `testing/`— приспособления, които всяка услуга използва повторно
-Фабрично приспособление с продължителност на живота,`auth_headers(user, company, roles)`за симулиранеgateway-forwarded identity, in-memory`EventBus`мъниче, потвърждаващо публикувани събития, и aпомощник за еднократна употреба на Postgres (testcontainers).
-## Какво умишлено НЕ принадлежи тук
-| Изкушаващо за споделяне | Защо остава навън |
-|---|---|
-| SQLAlchemy база / хранилища | База данни за услуга: всяка услуга притежава своя форма на постоянство |
-| Изброявания на домейни (състояние на фактура, роли в регистъра) | Бизнес логика — принадлежи към договора на притежаващата услуга |
-| Класове клиенти на услуги (`RegistryClient`, …) | Повикващите дефинират *портове* за това, от което *се* нуждаят (шестоъгълно правило); споделен клиент би свързал всеки потребител с една форма |
-| LLM/доставчик SDK обвивки | само адаптери на модел-шлюз |
-| Флагове за функции / ключове за изключване | модел-портал и притежаване на услуги |
+- Typed payloads from `schemas/events.py` (Pydantic-validated on both ends).
+- Consumer groups per service; automatic ack on success, retry with dead-letter after N
+  failures.
+- Every event carries `event_id`, `occurred_at`, `tenant_id`, `request_id` — consumers use
+  `event_id` as their idempotency key.
 
-## Зависимости и инструменти
+### `logging.py` + `middleware.py` + `telemetry.py` — observability
+
+- structlog JSON lines with `service`, `request_id`, `user_id`, `company_id` bound from
+  contextvars — set once by `RequestIdMiddleware` + `auth_context`, present on every line.
+- `RequestIdMiddleware`: read `X-Request-Id` (or generate), bind, echo on response.
+- `telemetry.init(app)`: OpenTelemetry tracing for FastAPI + httpx, so a trace started at
+  the gateway continues through every hop.
+
+### `health.py` + `lifespan.py` — uniform ops surface
+
+- `health_router(checks={"db": ping_db, "redis": ping_redis})` mounts `GET /health`
+  (liveness, always 200) and `GET /ready` (503 if any probe fails) — the contract Docker
+  Compose / k8s checks rely on for every service.
+- `make_lifespan(on_startup=[...], on_shutdown=[...])` boots the httpx pool, telemetry,
+  and the event bus, then runs service-specific hooks (DB engine, arq pool).
+
+### `schemas/` — the wire contracts
+
+Only DTOs that **cross a service boundary** live here (chat/completion shapes used by
+agent-service ↔ model-gateway, retrieval chunks, event payloads, `AuthContext`). A DTO
+used by exactly one service stays in that service's `models/` — e.g. session/message
+DTOs live in agent-service, since conversations are internal to it. Moving a type here
+is a deliberate act: it becomes a frozen contract.
+
+### `errors.py` + `pagination.py` — API consistency
+
+- One error envelope (`{"error": {"code", "message", "request_id"}}`) and shared exception
+  handlers, so all 11 services fail identically and the frontend handles one shape.
+- Cursor pagination params/response used by every list endpoint.
+
+### `testing/` — fixtures every service reuses
+
+App-factory fixture with lifespan, `auth_headers(user, company, roles)` for simulating
+gateway-forwarded identity, an in-memory `EventBus` stub asserting published events, and a
+disposable-Postgres helper (testcontainers).
+
+## What deliberately does NOT belong here
+
+| Tempting to share | Why it stays out |
+|---|---|
+| SQLAlchemy base / repositories | Database-per-service: each service owns its persistence shape |
+| Domain enums (invoice status, registry roles) | Business logic — belongs to the owning service's contract |
+| Service client classes (`RegistryClient`, …) | Callers define *ports* for what *they* need (hexagonal rule); a shared client would couple every consumer to one shape |
+| LLM/provider SDK wrappers | model-gateway's adapters only |
+| Feature flags / kill switches | model-gateway and owning services |
+
+## Dependencies & tooling
+
 
 ```toml
 [project]
@@ -154,11 +220,25 @@ dependencies = [
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.5", "mypy>=1.10", "testcontainers>=4"]
 ```
 
-Инсталиран от всяка услуга като a`uv`зависимост от пътя на работното пространство(`x7-common = { workspace = true }`), така че промените се взимат локално без публикуване;CI изпълнява общия тестов пакет преди всеки сервизен пакет.
-## Контролен списък за внедряване
-- [ ] Пакетно скеле + pyproject + uv работно окабеляване- [ ] `CommonSettings`, `http`, `lifespan`, `health`(най-малкото полезно ядро)- [ ] `RequestIdMiddleware`+ настройка на structlog + контекстни променливи- [ ] `AuthContext`зависимост +`require_role`+ токени за услуга (с услуга за самоличност)- [ ] `EventBus`публикуване/консумиране + мъртво писмо + въведени полезни натоварвания за събития- [ ] Обвивка на грешка + обработка на изключения; помощници за пагиниране- [ ] `schemas/`чат + DTO за извличане (първо агент ↔ договор за модел-шлюз)- [ ] `testing/`тела; общ тестов пакет в CI пред сервизните пакети- [ ] OpenTelemetry init е проверено от край до край през шлюза
-## Препратки
-- [02 — Каталог на услугите (споделен`libs/common`правила)](../../02-service-catalog.md)
-- [01 §7 — събития](../../01-architecture-overview.md#7-asynchronous-work-and-events) ·
-[01 §10 — междусекторни стандарти](../../01-architecture-overview.md#10-cross-cutting-standards-every-service)
-- [06 — шаблони: DI/композиционен корен, тънки събития](../../06-architectural-patterns.md)
+Installed by each service as a `uv` workspace path dependency
+(`x7-common = { workspace = true }`), so changes are picked up locally without publishing;
+CI runs the common test suite before any service suite.
+
+## Implementation checklist
+
+- [ ] Package scaffold + pyproject + uv workspace wiring
+- [ ] `CommonSettings`, `http`, `lifespan`, `health` (smallest useful core)
+- [ ] `RequestIdMiddleware` + structlog setup + contextvars
+- [ ] `AuthContext` dependency + `require_role` + service tokens (with identity-service)
+- [ ] `EventBus` publish/consume + dead-letter + typed event payloads
+- [ ] Error envelope + exception handlers; pagination helpers
+- [ ] `schemas/` chat + retrieval DTOs (agent ↔ model-gateway contract first)
+- [ ] `testing/` fixtures; common test suite in CI ahead of service suites
+- [ ] OpenTelemetry init verified end-to-end through the gateway
+
+## References
+
+- [02 — Service Catalog (shared __CODE_0__ rules)](../../02-service-catalog.md)
+- [01 §7 — events](../../01-architecture-overview.md#7-asynchronous-work-and-events) ·
+  [01 §10 — cross-cutting standards](../../01-architecture-overview.md#10-cross-cutting-standards-every-service)
+- [06 — patterns: DI/composition root, thin events](../../06-architectural-patterns.md)

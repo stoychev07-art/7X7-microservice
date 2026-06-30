@@ -1,75 +1,93 @@
-# платформа-услуга
-> Водопровод на платформа на едно място: известия в приложението, транзакционен имейл, предупреждения за операции,
-> билети за поддръжка, централен съд за одит и настройки на платформата. Четири малки модула —
-> `notifications/`, `support/`, `audit/`, `settings/` — умишлено една услуга: всяка е
-> нисък трафик, отнема предимно събития и няма свързване на домейни, така че отделни разгръщащи се
-> не би купил нищо освен допълнителни бази данни, CI канали и табла за управление.
-**Състояние:** 📋 планирано · **Порт (dev):** 8090 · **База данни:** `platform`
-## Отговорности
-### Известия (`notifications/`)
-- Известия в приложението (звънец): създаване, списък, маркиране-четене; предпочитания за всеки потребител.
-- Транзакционен имейл чрез адаптери на доставчик: **Brevo** (производство) и **log** (dev
-  резервен вариант); рендиране на шаблон с i18n (bg/en).
-- Уебкука за доставка на Brevo → проследяване на състоянието на доставката.
-- Сигнали за операции към канала на Telegram (оператори на платформата, не потребители).
-- Консумира `notification.requested` от всяка услуга — плюс събития в домейна, в които се превръща
-  известия (`invoice.issued`, `stock.low`).
-### Поддръжка (`support/`)
-- Билети за поддръжка: създаване/отговор от страна на наемателя, опашка от страна на персонала + отговори; актуализации уведомяват
-  чрез модула за известия (в процес, не е необходимо двупосочно пътуване).
-### Одит (`audit/`)
-- Централен **audit-log sink**: консумира `audit.event` от всяка услуга в една заявка
-  пътека; политики за задържане (напр. 90d одит, 30d следи — конфигурируеми).
-### Настройки (`settings/`)
-- Настройки на платформата (глобални флагове и настройки по подразбиране).
-- Крайни точки за агрегиране на администратори **само когато е неизбежно** — всяка услуга за домейн притежава своя
-  собствени административни крайни точки (администратор на токени в услуга за таксуване, администратор на доставчик в шлюз на модела,
-  и т.н.); тази служба не се превръща в богослужение.
-## API скица
+# platform-service
+
+> Platform plumbing in one place: in-app notifications, transactional email, ops alerts,
+> support tickets, the central audit sink, and platform settings. Four small modules —
+> `notifications/`, `support/`, `audit/`, `settings/` — deliberately one service: each is
+> low-traffic, mostly event-consuming, and has no domain coupling, so separate deployables
+> would buy nothing but extra databases, CI pipelines, and dashboards.
+
+**Status:** 📋 planned · **Port (dev):** 8090 · **Database:** `platform`
+
+## Responsibilities
+
+### Notifications (`notifications/`)
+- In-app notifications (bell): create, list, mark-read; per-user preferences.
+- Transactional email via provider adapters: **Brevo** (production) and **log** (dev
+  fallback); template rendering with i18n (bg/en).
+- Brevo delivery webhook → delivery status tracking.
+- Ops alerts to the Telegram channel (platform operators, not users).
+- Consumes `notification.requested` from every service — plus domain events it turns into
+  notifications (`invoice.issued`, `stock.low`).
+
+### Support (`support/`)
+- Support tickets: tenant-side create/reply, staff-side queue + replies; updates notify
+  via the notifications module (in-process, no event round-trip needed).
+
+### Audit (`audit/`)
+- Central **audit-log sink**: consumes `audit.event` from every service into one queryable
+  trail; retention policies (e.g. 90d audit, 30d traces — configurable).
+
+### Settings (`settings/`)
+- Platform settings (global flags and defaults).
+- Admin aggregation endpoints **only where unavoidable** — each domain service owns its
+  own admin endpoints (tokens admin in billing-service, provider admin in model-gateway,
+  etc.); this service does not become a god-service.
+
+## API sketch
+
 `GET /notifications` · `POST /notifications/read` · `GET/PATCH /preferences` ·
 `POST /webhooks/brevo` · `GET/POST /support/tickets` ·
 `POST /support/tickets/{id}/messages` · `GET /audit?filter=` · `GET/POST /settings`
-## Притежавани данни
+
+## Data owned
+
 `notifications`, `deliveries`, `preferences`, `support_tickets`, `support_messages`,
 `audit_log`, `platform_settings`.
-## Зависимости
-| Посока | Какво |
-|---|---|
-| Обаден от | шлюз (потребителски интерфейс с камбанка, потребителски интерфейс за поддръжка, зона `/admin` на приложението Next.js) |
-| Обаждания | API на Brevo, API на Telegram Bot (канал за операции), услуга за идентичност (търсене на потребители/наематели), услуга за фактуриране (изгледи на използване) |
-| Събития в | `notification.requested`, `invoice.issued`, `stock.low`, `audit.event` |
-| работни места | опашка за изпращане на имейли с повторен опит/назад, запазване на одит/проследяване |
 
-## Бележки по дизайна
-- Всяка друга услуга изпраща имейл **само** чрез публикуване `notification.requested` — не
-  услугата съдържа идентификационни данни за SMTP/Brevo, с изключение на този (същият аргумент за централизация като
-  моделът-шлюз).
-- Шаблоните за имейл са живи тук с каталозите i18n; identity-service изпраща OTP/нулиране
-  имейли чрез събития, запазвайки го като листна услуга.
-- Поне веднъж доставка на събитие ⇒ създаването на известия трябва да е идемпотентно (ключ за дедупиране в
-  полезният товар на събитието).
-- Администраторските маршрути връщат **404 към неадминистратори** (няма изтичане на съществуване) — запазено от
-  ADR-015 на monolith, наложено чрез заявката на администратора на платформата на шлюза + тук.
-- Имитационни *сесии* на живо в услуга за самоличност; защитата само за четене за имитирани
-  заявките се изпълняват на шлюза. Тази услуга показва само данните от потребителския интерфейс на администратора.
-- Четирите модула споделят базата данни, но не и таблиците; ако някой някога има нужда от независим
-  мащабиране (малко вероятно - всички са с нисък трафик), границата на модула е екстракционният шев.
-- **Не е пренесено**: Dev Studio (анализатор на пънове — вижте
+## Dependencies
+
+| Direction | What |
+|---|---|
+| Called by | gateway (bell UI, support UI, `/admin` zone of the Next.js app) |
+| Calls | Brevo API, Telegram Bot API (ops channel), identity-service (user/tenant lookups), billing-service (usage views) |
+| Events in | `notification.requested`, `invoice.issued`, `stock.low`, `audit.event` |
+| Jobs | email send queue with retry/backoff, audit/trace retention |
+
+## Design notes
+
+- Every other service sends email **only** by publishing `notification.requested` — no
+  service holds SMTP/Brevo credentials except this one (same centralization argument as
+  the model-gateway).
+- Email templates live here with the i18n catalogs; identity-service sends OTP/reset
+  emails through events, keeping it a leaf service.
+- At-least-once event delivery ⇒ notification creation must be idempotent (dedupe key in
+  the event payload).
+- Admin routes return **404 to non-admins** (no existence leakage) — preserved from the
+  monolith's ADR-015, enforced via the platform-admin claim at the gateway + here.
+- Impersonation *sessions* live in identity-service; the read-only guard for impersonated
+  requests is enforced at the gateway. This service only surfaces the admin UI data.
+- The four modules share the database but not tables; if one ever needs independent
+  scaling (unlikely — all are low-traffic), the module boundary is the extraction seam.
+- **Not carried over**: Dev Studio (stub analyzer — see
   [04 §4](../../04-functional-coverage.md)).
-## Контролен списък за внедряване
-- [ ] Схема + известие CRUD + състояние на четене + предпочитания
-- [ ] Порт на доставчик на имейл + адаптери за Brevo и журнал
-- [ ] Рендиране на шаблон с bg/en каталози
-- [] `notification.requested` потребител (идемпотентен) + изпращане на задание с повторен опит/отстъпка
-- [ ] Brevo webhook → статус на доставка
-- [] Telegram ops-alert адаптер
-- [ ] Потребители на домейн събития (`invoice.issued`, `stock.low`)
-- [ ] Модел на билет за поддръжка + маршрути на наемател/персонал
-- [ ] `audit.event` потребител + API за одит с възможност за запитване (филтри: наемател, потребител, действие, период)
-- [ ] Работа за задържане с политики за всяка категория
-- [ ] Настройки на платформата CRUD
-- [ ] Тестове за поведение 404-for-non-admin
-## Препратки
-- [02 — запис в каталога на услугите](../../02-service-catalog.md#platform-service-8090)
-- [02 § Умишлено обединени граници](../../02-service-catalog.md#deliberately-merged-boundaries)
-- [07 §5.11 — графика на зависимости](../../07-dependency-graphs.md#511-platform-service)
+
+## Implementation checklist
+
+- [ ] Schema + notification CRUD + read-state + preferences
+- [ ] Email provider port + Brevo and log adapters
+- [ ] Template rendering with bg/en catalogs
+- [ ] `notification.requested` consumer (idempotent) + send job with retry/backoff
+- [ ] Brevo webhook → delivery status
+- [ ] Telegram ops-alert adapter
+- [ ] Domain-event consumers (`invoice.issued`, `stock.low`)
+- [ ] Support ticket model + tenant/staff routes
+- [ ] `audit.event` consumer + queryable audit API (filters: tenant, user, action, period)
+- [ ] Retention job with per-category policies
+- [ ] Platform settings CRUD
+- [ ] 404-for-non-admin behavior tests
+
+## References
+
+- [02 — service catalog entry](../../02-service-catalog.md#platform-service-8090)
+- [02 § Deliberately merged boundaries](../../02-service-catalog.md#deliberately-merged-boundaries)
+- [07 §5.11 — dependency graph](../../07-dependency-graphs.md#511-platform-service)
